@@ -18,6 +18,12 @@ interface TradeDao {
     @Query("SELECT * FROM trades WHERE id = :id")
     suspend fun findById(id: String): TradeEntity?
 
+    @Query("SELECT externalOrderNo FROM trades WHERE externalOrderNo IS NOT NULL")
+    suspend fun findAllExternalOrderNos(): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnoreOnConflict(entity: TradeEntity): Long
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: TradeEntity)
 

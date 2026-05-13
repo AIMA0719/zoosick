@@ -62,6 +62,14 @@ class ApiCredentialStoreImpl @Inject constructor(
         emitter.value = loadFromPrefs()
     }
 
+    override suspend fun saveAccount(accountNo: String, productCode: String) {
+        prefs.edit()
+            .putString(K_ACCOUNT_NO, accountNo)
+            .putString(K_PRODUCT_CODE, productCode)
+            .apply()
+        emitter.value = loadFromPrefs()
+    }
+
     override suspend fun clear() {
         prefs.edit().clear().apply()
         emitter.value = null
@@ -81,6 +89,8 @@ class ApiCredentialStoreImpl @Inject constructor(
             approvalKey = prefs.getString(K_APPROVAL_KEY, null),
             approvalKeyExpiresAt = prefs.getLong(K_APPROVAL_KEY_EXP, 0L)
                 .takeIf { it > 0L }?.let(Instant::ofEpochMilli),
+            accountNo = prefs.getString(K_ACCOUNT_NO, null),
+            productCode = prefs.getString(K_PRODUCT_CODE, null),
         )
     }
 
@@ -95,5 +105,7 @@ class ApiCredentialStoreImpl @Inject constructor(
         const val K_ACCESS_TOKEN_EXP = "kis_access_token_expires_at"
         const val K_APPROVAL_KEY = "kis_approval_key"
         const val K_APPROVAL_KEY_EXP = "kis_approval_key_expires_at"
+        const val K_ACCOUNT_NO = "kis_account_no"
+        const val K_PRODUCT_CODE = "kis_product_code"
     }
 }

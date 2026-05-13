@@ -97,6 +97,8 @@ dependencies {
 
     // WorkManager (Gemma 모델 다운로드)
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
 
     // LiteRT-LM (Gemma 4 E4B 온디바이스 추론) — MediaPipe tasks-genai 후속
     implementation(libs.litertlm.android)

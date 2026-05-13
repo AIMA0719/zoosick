@@ -35,10 +35,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.myinfocar.aicoachstock.data.llm.ModelDownloadWorker
 import com.myinfocar.aicoachstock.domain.llm.DownloadEvent
 import com.myinfocar.aicoachstock.domain.llm.GenerationEvent
 import com.myinfocar.aicoachstock.domain.llm.LLMEngine
@@ -278,12 +280,15 @@ fun LlmPocScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            val context = LocalContext.current
             DownloadCard(
                 ui = state.download,
                 modelReady = state.modelReady,
                 onStart = viewModel::startDownload,
                 onCancel = viewModel::cancelDownload,
                 onDelete = viewModel::deleteModel,
+                onEnqueueBackground = { ModelDownloadWorker.enqueue(context) },
+                onCancelBackground = { ModelDownloadWorker.cancel(context) },
             )
             InferenceCard(
                 modelReady = state.modelReady,
@@ -305,6 +310,8 @@ private fun DownloadCard(
     onStart: () -> Unit,
     onCancel: () -> Unit,
     onDelete: () -> Unit,
+    onEnqueueBackground: () -> Unit,
+    onCancelBackground: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -366,6 +373,20 @@ private fun DownloadCard(
                 }
                 if (modelReady) {
                     OutlinedButton(onClick = onDelete) { Text("삭제") }
+                }
+            }
+
+            Text(
+                "백그라운드 (WorkManager): Wi-Fi + 충전·저장공간 OK 시에만 실행. 앱 종료 후에도 계속 진행.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onEnqueueBackground, enabled = !modelReady) {
+                    Text("백그라운드 다운로드")
+                }
+                OutlinedButton(onClick = onCancelBackground) {
+                    Text("BG 취소")
                 }
             }
         }

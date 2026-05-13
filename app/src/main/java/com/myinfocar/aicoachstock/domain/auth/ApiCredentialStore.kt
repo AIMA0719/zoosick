@@ -18,6 +18,8 @@ interface ApiCredentialStore {
     suspend fun saveAppKey(appKey: String, appSecret: String, env: KisEnv)
     suspend fun saveAccessToken(token: String, expiresAt: Instant)
     suspend fun saveApprovalKey(key: String, expiresAt: Instant)
+    /** 한투 계좌번호 (8자리) + 상품코드 (2자리, 보통 "01"). 체결 import에 필요. */
+    suspend fun saveAccount(accountNo: String, productCode: String)
 
     suspend fun clear()
 }
@@ -30,6 +32,8 @@ data class ApiCredentials(
     val accessTokenExpiresAt: Instant?,
     val approvalKey: String?,
     val approvalKeyExpiresAt: Instant?,
+    val accountNo: String? = null,
+    val productCode: String? = null,
 ) {
     fun isAccessTokenValid(now: Instant = Instant.now()): Boolean =
         accessToken != null && accessTokenExpiresAt != null && accessTokenExpiresAt.isAfter(now)
@@ -38,13 +42,13 @@ data class ApiCredentials(
         approvalKey != null && approvalKeyExpiresAt != null && approvalKeyExpiresAt.isAfter(now)
 }
 
+/**
+ * 한투 OpenAPI 환경. **실전(PROD) 전용** — 모의(VTS)는 사용하지 않음.
+ * (과거 호환: enum이지만 PROD 단일 멤버. 사용자 선택 UI 제거.)
+ */
 enum class KisEnv(val restBaseUrl: String, val wsUrl: String) {
     PROD(
         restBaseUrl = "https://openapi.koreainvestment.com:9443",
         wsUrl = "ws://ops.koreainvestment.com:21000",
-    ),
-    VTS(
-        restBaseUrl = "https://openapivts.koreainvestment.com:29443",
-        wsUrl = "ws://ops.koreainvestment.com:31000",
     ),
 }

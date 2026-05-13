@@ -3,6 +3,14 @@ package com.myinfocar.aicoachstock.data.local.db
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import com.myinfocar.aicoachstock.data.local.db.alert.PriceAlertDao
+import com.myinfocar.aicoachstock.data.local.db.alert.PriceAlertEntity
+import com.myinfocar.aicoachstock.data.local.db.coach.CoachMessageDao
+import com.myinfocar.aicoachstock.data.local.db.coach.CoachMessageEntity
+import com.myinfocar.aicoachstock.data.local.db.coach.CoachSessionDao
+import com.myinfocar.aicoachstock.data.local.db.coach.CoachSessionEntity
+import com.myinfocar.aicoachstock.data.local.db.entry.EntryChecklistDao
+import com.myinfocar.aicoachstock.data.local.db.entry.EntryChecklistEntity
 import com.myinfocar.aicoachstock.data.local.db.principle.PrincipleDao
 import com.myinfocar.aicoachstock.data.local.db.principle.PrincipleEntity
 import com.myinfocar.aicoachstock.data.local.db.reflection.TradeReflectionDao
@@ -27,8 +35,12 @@ import com.myinfocar.aicoachstock.data.local.db.watchlist.WatchListEntity
         StockEntity::class,
         WatchListEntity::class,
         TradeReflectionEntity::class,
+        CoachSessionEntity::class,
+        CoachMessageEntity::class,
+        EntryChecklistEntity::class,
+        PriceAlertEntity::class,
     ],
-    version = 4,
+    version = 8,
     exportSchema = false,
 )
 @TypeConverters(AppTypeConverters::class)
@@ -38,4 +50,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun stockDao(): StockDao
     abstract fun watchListDao(): WatchListDao
     abstract fun tradeReflectionDao(): TradeReflectionDao
+    abstract fun coachSessionDao(): CoachSessionDao
+    abstract fun coachMessageDao(): CoachMessageDao
+    abstract fun entryChecklistDao(): EntryChecklistDao
+    abstract fun priceAlertDao(): PriceAlertDao
 }

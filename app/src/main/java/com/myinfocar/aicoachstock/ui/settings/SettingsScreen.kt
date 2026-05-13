@@ -55,6 +55,7 @@ import com.myinfocar.aicoachstock.data.remote.kis.auth.KisAuthService
 import com.myinfocar.aicoachstock.domain.auth.ApiCredentialStore
 import com.myinfocar.aicoachstock.domain.auth.ApiCredentials
 import com.myinfocar.aicoachstock.domain.auth.KisEnv
+import com.myinfocar.aicoachstock.domain.sync.TradeImportService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,6 +71,7 @@ data class SettingsUiState(
     val creds: ApiCredentials? = null,
     val isTokenLoading: Boolean = false,
     val isApprovalLoading: Boolean = false,
+    val isSyncing: Boolean = false,
     val message: String? = null,
 )
 
@@ -77,6 +79,7 @@ data class SettingsUiState(
 class SettingsViewModel @Inject constructor(
     private val store: ApiCredentialStore,
     private val authService: KisAuthService,
+    private val tradeImportService: TradeImportService,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(SettingsUiState())
@@ -94,6 +97,33 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             store.saveAppKey(appKey.trim(), appSecret.trim(), env)
             _ui.update { it.copy(message = "키 저장 완료") }
+        }
+    }
+
+    fun saveAccount(accountNo: String, productCode: String) {
+        viewModelScope.launch {
+            store.saveAccount(accountNo.trim(), productCode.trim().ifBlank { "01" })
+            _ui.update { it.copy(message = "계좌번호 저장 완료") }
+        }
+    }
+
+    fun syncNow() {
+        if (_ui.value.isSyncing) return
+        _ui.update { it.copy(isSyncing = true, message = null) }
+        viewModelScope.launch {
+            val result = tradeImportService.importRecent()
+            _ui.update {
+                it.copy(
+                    isSyncing = false,
+                    message = result.fold(
+                        onSuccess = { s ->
+                            "✅ 동기화 완료 (${s.range.first}~${s.range.second})\n" +
+                                "신규 ${s.inserted}건 / 중복 ${s.skippedDuplicate}건 / 무시 ${s.ignored}건"
+                        },
+                        onFailure = { e -> "❌ 동기화 실패: ${e.message}" },
+                    ),
+                )
+            }
         }
     }
 
@@ -144,9 +174,14 @@ class SettingsViewModel @Inject constructor(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onOpenLlmPoc: () -> Unit = {},
     onOpenKisWsPoc: () -> Unit = {},
+    onOpenEntryChecklist: () -> Unit = {},
+    onOpenPriceAlerts: () -> Unit = {},
+    onOpenStockSearch: () -> Unit = {},
+    onOpenResearch: () -> Unit = {},
+    onOpenHoldings: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.ui.collectAsState()
@@ -156,8 +191,10 @@ fun SettingsScreen(
             TopAppBar(
                 title = { Text("설정") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                        }
                     }
                 },
             )
@@ -184,6 +221,13 @@ fun SettingsScreen(
                 onClear = viewModel::clearAll,
             )
             HorizontalDivider()
+            AccountSection(
+                creds = state.creds,
+                isSyncing = state.isSyncing,
+                onSaveAccount = viewModel::saveAccount,
+                onSyncNow = viewModel::syncNow,
+            )
+            HorizontalDivider()
             Text("AI 모델", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Gemma 4 E4B 다운로드 / 로드 / 추론 PoC. 본 개발 전 검증용.",
@@ -198,6 +242,28 @@ fun SettingsScreen(
                 onClick = onOpenKisWsPoc,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("한투 WS PoC 열기") }
+            HorizontalDivider()
+            Text("도구", style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(
+                onClick = onOpenEntryChecklist,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("🚦 진입 체크리스트") }
+            OutlinedButton(
+                onClick = onOpenPriceAlerts,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("🔔 가격 알림 (손절/익절)") }
+            OutlinedButton(
+                onClick = onOpenStockSearch,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("🔎 종목 검색") }
+            OutlinedButton(
+                onClick = onOpenResearch,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("📑 종목 리서치 Q&A") }
+            OutlinedButton(
+                onClick = onOpenHoldings,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("📊 보유 종목 (한투 계좌)") }
             HorizontalDivider()
             TokenSection(
                 creds = state.creds,
@@ -229,27 +295,16 @@ private fun ApiKeySection(
 ) {
     var appKey by rememberSaveable(creds?.appKey) { mutableStateOf(creds?.appKey.orEmpty()) }
     var appSecret by rememberSaveable(creds?.appSecret) { mutableStateOf(creds?.appSecret.orEmpty()) }
-    var env by rememberSaveable(creds?.env) { mutableStateOf(creds?.env ?: KisEnv.PROD) }
+    val env = KisEnv.PROD  // 실전 전용 — 모의 사용 안 함
     var secretVisible by rememberSaveable { mutableStateOf(false) }
     var showClearConfirm by rememberSaveable { mutableStateOf(false) }
 
-    Text("한투 OpenAPI 인증", style = MaterialTheme.typography.titleMedium)
+    Text("한투 OpenAPI 인증 (실전)", style = MaterialTheme.typography.titleMedium)
     Text(
-        "App Key/Secret은 EncryptedSharedPreferences에 암호화 저장됩니다. 외부 전송 없음.",
+        "App Key/Secret은 EncryptedSharedPreferences에 암호화 저장됩니다. 외부 전송 없음. 실전 계정만 지원.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-
-    Text("환경", style = MaterialTheme.typography.labelLarge)
-    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-        KisEnv.entries.forEachIndexed { i, e ->
-            SegmentedButton(
-                selected = env == e,
-                onClick = { env = e },
-                shape = SegmentedButtonDefaults.itemShape(i, KisEnv.entries.size),
-            ) { Text(if (e == KisEnv.PROD) "실전 (PROD)" else "모의 (VTS)") }
-        }
-    }
 
     OutlinedTextField(
         value = appKey,
@@ -309,6 +364,77 @@ private fun ApiKeySection(
             },
         )
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AccountSection(
+    creds: ApiCredentials?,
+    isSyncing: Boolean,
+    onSaveAccount: (accountNo: String, productCode: String) -> Unit,
+    onSyncNow: () -> Unit,
+) {
+    var accountNo by rememberSaveable(creds?.accountNo) {
+        mutableStateOf(creds?.accountNo.orEmpty())
+    }
+    var productCode by rememberSaveable(creds?.productCode) {
+        mutableStateOf(creds?.productCode ?: "01")
+    }
+
+    Text("계좌번호 (체결 자동 동기화)", style = MaterialTheme.typography.titleMedium)
+    Text(
+        "한투 계좌의 일별 체결 내역을 자동으로 매매기록으로 가져옵니다. CANO=앞 8자리, ACNT_PRDT_CD=상품코드(보통 01).",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = accountNo,
+            onValueChange = { accountNo = it.filter { ch -> ch.isDigit() }.take(8) },
+            label = { Text("CANO (8자리)") },
+            singleLine = true,
+            modifier = Modifier.weight(2f),
+        )
+        OutlinedTextField(
+            value = productCode,
+            onValueChange = { productCode = it.filter { ch -> ch.isDigit() }.take(2) },
+            label = { Text("상품코드") },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = { onSaveAccount(accountNo, productCode) },
+            enabled = accountNo.length == 8,
+            modifier = Modifier.weight(1f),
+        ) { Text("계좌 저장") }
+
+        OutlinedButton(
+            onClick = onSyncNow,
+            enabled = !isSyncing && creds?.accountNo != null && creds.accessToken != null,
+            modifier = Modifier.weight(1f),
+        ) {
+            if (isSyncing) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            } else {
+                Text("🔄 지금 동기화")
+            }
+        }
+    }
+    Text(
+        "백그라운드 자동: 매일 16:00 KST(장 마감 후) WorkManager로 1회 자동 import.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

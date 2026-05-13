@@ -38,6 +38,10 @@ object LLMConfigModule {
     fun provideModelSource(): ModelSource = ModelSource(
         // HuggingFace litert-community/gemma-4-E4B-it-litert-lm — Apache 2.0, 인증 불필요.
         url = "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm",
+        mirrors = listOf(
+            // 미러: HuggingFace CDN raw 경로 (resolve와 동일 결과). 1차 차단 시 폴백 후보.
+            "https://hf-mirror.com/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm",
+        ),
     )
 
     @Provides

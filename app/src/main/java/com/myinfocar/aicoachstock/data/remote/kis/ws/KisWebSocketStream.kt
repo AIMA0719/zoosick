@@ -4,9 +4,15 @@ import com.myinfocar.aicoachstock.data.remote.kis.auth.KisAuthService
 import com.myinfocar.aicoachstock.domain.auth.ApiCredentialStore
 import com.myinfocar.aicoachstock.domain.market.ConnectionState
 import com.myinfocar.aicoachstock.domain.market.MarketDataStream
+import com.myinfocar.aicoachstock.domain.market.MarketHours
 import com.myinfocar.aicoachstock.domain.model.MarketTick
 import com.myinfocar.aicoachstock.domain.model.SubscriptionTarget
 import com.myinfocar.aicoachstock.domain.model.TickSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +22,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.add
@@ -88,51 +95,126 @@ class KisWebSocketStream @Inject constructor(
     @Volatile
     private var activeApprovalKey: String? = null
 
+    /** 의도된 연결(사용자가 connect 요청한 상태)인지. true면 onClosed/onFailure에서 자동 재연결. */
+    @Volatile
+    private var intendedConnected: Boolean = false
+
+    /** 재연결 시도 회수. 성공 시 0으로 리셋. */
+    @Volatile
+    private var reconnectAttempts: Int = 0
+
+    /** 재연결 대기 중인 job — 중복 트리거 방지. */
+    @Volatile
+    private var reconnectJob: Job? = null
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     override suspend fun connect() {
+        intendedConnected = true
         if (_connectionState.value != ConnectionState.DISCONNECTED) return
-        _connectionState.value = ConnectionState.CONNECTING
 
         val creds = store.current()
         if (creds == null) {
             _connectionState.value = ConnectionState.DISCONNECTED
             error("API 키 미설정 — Settings에서 App Key/Secret을 먼저 저장하세요.")
         }
+
+        if (!MarketHours.anyOpen()) {
+            // 비장시간이면 연결을 시도하지 않고 DEGRADED 상태로 대기.
+            // 본 개발에서 AlarmManager로 장 시작 1분 전 자동 재시도.
+            Timber.i("KIS WS: 비장시간 — 연결 보류, DEGRADED 상태로 유지")
+            _connectionState.value = ConnectionState.DEGRADED
+            return
+        }
+
+        openOnce(creds.env.wsUrl)
+    }
+
+    private suspend fun openOnce(wsUrl: String) {
+        _connectionState.value = ConnectionState.CONNECTING
         val approvalKey = authService.ensureApprovalKey().getOrElse { cause ->
             _connectionState.value = ConnectionState.DISCONNECTED
             throw cause
         }
         activeApprovalKey = approvalKey
-
-        val request = Request.Builder().url(toHttpUrl(creds.env.wsUrl)).build()
+        val request = Request.Builder().url(toHttpUrl(wsUrl)).build()
         webSocket = client.newWebSocket(request, Listener())
     }
 
     override suspend fun disconnect() {
+        intendedConnected = false
+        reconnectJob?.cancel()
+        reconnectJob = null
         webSocket?.close(NORMAL_CLOSE, "client disconnect")
         webSocket = null
         activeApprovalKey = null
         _subscriptions.value = emptyList()
         _connectionState.value = ConnectionState.DISCONNECTED
         _connectedSinceEpochMillis.value = null
+        reconnectAttempts = 0
     }
 
     override fun subscribe(targets: List<SubscriptionTarget>) {
+        val ws = webSocket ?: run {
+            // 연결 안 됐어도 desired 구독 목록은 유지. 재연결 시 자동 재구독.
+            _subscriptions.value = targets.sortedBy { it.priority }.take(SUBSCRIPTION_LIMIT)
+            return
+        }
+        val approvalKey = activeApprovalKey ?: return
+        val newDesired = targets.sortedBy { it.priority }.take(SUBSCRIPTION_LIMIT)
+        val currentTickers = _subscriptions.value.map { it.ticker }.toSet()
+        val newTickers = newDesired.map { it.ticker }.toSet()
+
+        val toAdd = newDesired.filter { it.ticker !in currentTickers }
+        val toRemove = currentTickers - newTickers
+
+        toRemove.forEach { ws.send(buildControlMessage(approvalKey, it, register = false)) }
+        toAdd.forEach { ws.send(buildControlMessage(approvalKey, it.ticker, register = true)) }
+
+        _subscriptions.value = newDesired
+    }
+
+    override fun unsubscribe(tickers: List<String>) {
+        val ws = webSocket
+        val approvalKey = activeApprovalKey
+        if (ws != null && approvalKey != null) {
+            tickers.forEach { t ->
+                ws.send(buildControlMessage(approvalKey, t, register = false))
+            }
+        }
+        _subscriptions.update { list -> list.filterNot { it.ticker in tickers } }
+    }
+
+    /** 연결 직후 desired 구독을 일괄 재등록. */
+    private fun resubscribeAll() {
         val ws = webSocket ?: return
         val approvalKey = activeApprovalKey ?: return
-        val capped = targets.sortedBy { it.priority }.take(SUBSCRIPTION_LIMIT)
-        _subscriptions.value = capped
-        capped.forEach { target ->
+        _subscriptions.value.forEach { target ->
             ws.send(buildControlMessage(approvalKey, target.ticker, register = true))
         }
     }
 
-    override fun unsubscribe(tickers: List<String>) {
-        val ws = webSocket ?: return
-        val approvalKey = activeApprovalKey ?: return
-        tickers.forEach { t ->
-            ws.send(buildControlMessage(approvalKey, t, register = false))
+    /** 지수 백오프 재연결 스케줄. 1→2→4→8→16→30s 상한, 최대 무한 시도 (사용자가 disconnect 호출 시까지). */
+    private fun scheduleReconnect() {
+        if (!intendedConnected) return
+        if (reconnectJob?.isActive == true) return
+        if (!MarketHours.anyOpen()) {
+            // 비장시간이면 DEGRADED 상태로 두고 대기.
+            _connectionState.value = ConnectionState.DEGRADED
+            return
         }
-        _subscriptions.update { list -> list.filterNot { it.ticker in tickers } }
+        val attempt = reconnectAttempts + 1
+        reconnectAttempts = attempt
+        val delaySec = minOf(30L, (1L shl (attempt - 1).coerceAtMost(5)))
+        Timber.i("KIS WS: ${delaySec}s 후 재연결 시도 #$attempt")
+        _connectionState.value = ConnectionState.DEGRADED
+        reconnectJob = scope.launch {
+            delay(delaySec * 1000L)
+            if (!intendedConnected) return@launch
+            val creds = store.current() ?: return@launch
+            runCatching { openOnce(creds.env.wsUrl) }
+                .onFailure { Timber.w(it, "KIS WS 재연결 실패 #$attempt") }
+        }
     }
 
     override fun ticks(ticker: String): Flow<MarketTick> =
@@ -170,12 +252,14 @@ class KisWebSocketStream @Inject constructor(
             Timber.i("KIS WS 연결 성공 code=${response.code}")
             _connectedSinceEpochMillis.value = System.currentTimeMillis()
             _connectionState.value = ConnectionState.CONNECTED
+            reconnectAttempts = 0
+            // 의도된 desired 구독 자동 재등록 (재연결 후 복구).
+            resubscribeAll()
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             _rawMessages.tryEmit(text.take(MAX_RAW_LOG_CHARS))
 
-            // JSON (구독 ACK 또는 PINGPONG) vs 평문 tick 구분.
             if (text.startsWith("{")) {
                 handleJsonControl(webSocket, text)
             } else {
@@ -186,15 +270,23 @@ class KisWebSocketStream @Inject constructor(
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             Timber.i("KIS WS 종료 code=$code reason=$reason")
             _connectedSinceEpochMillis.value = null
-            _connectionState.value = ConnectionState.DISCONNECTED
             this@KisWebSocketStream.webSocket = null
+            if (intendedConnected) {
+                scheduleReconnect()
+            } else {
+                _connectionState.value = ConnectionState.DISCONNECTED
+            }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             Timber.w(t, "KIS WS 실패 code=${response?.code}")
             _connectedSinceEpochMillis.value = null
-            _connectionState.value = ConnectionState.DISCONNECTED
             this@KisWebSocketStream.webSocket = null
+            if (intendedConnected) {
+                scheduleReconnect()
+            } else {
+                _connectionState.value = ConnectionState.DISCONNECTED
+            }
         }
     }
 
@@ -219,15 +311,19 @@ class KisWebSocketStream @Inject constructor(
         val countSafe = parts[2].toIntOrNull() ?: 1
         val payload = parts[3]
 
-        // 한 frame에 count개 종목이 연달아. 각 종목 필드 수는 H0STCNT0 사양상 46개.
-        // PoC는 첫 종목만 처리 — 본 개발에서 fields.chunked(46) 로 전체 처리.
         val fields = payload.split("^")
+        // H0STCNT0: count*46 필드 (사양). count > 1 시 chunked로 각 종목 분리.
+        // 최소 필드 수보다 부족하면 skip.
         if (fields.size < KOSPI_EXEC_FIELDS_REQUIRED) return
 
-        val tick = parseKospiExecTick(fields) ?: return
-        tickBus.tryEmit(tick)
-        if (countSafe > 1) {
-            Timber.d("KIS WS: 한 frame에 count=$countSafe 종목, PoC는 첫 종목만 처리")
+        val perTick = KOSPI_EXEC_FIELDS_PER_TICK
+        if (fields.size >= countSafe * perTick) {
+            fields.chunked(perTick).take(countSafe).forEach { chunk ->
+                parseKospiExecTick(chunk)?.let { tickBus.tryEmit(it) }
+            }
+        } else {
+            // 사양과 다른 케이스: 첫 종목만 안전 처리.
+            parseKospiExecTick(fields)?.let { tickBus.tryEmit(it) }
         }
     }
 
@@ -269,6 +365,7 @@ class KisWebSocketStream @Inject constructor(
         const val SUBSCRIPTION_LIMIT = 41
         const val NORMAL_CLOSE = 1000
         const val MAX_RAW_LOG_CHARS = 1024
-        const val KOSPI_EXEC_FIELDS_REQUIRED = 14 // 13번 인덱스까지 안전 접근
+        const val KOSPI_EXEC_FIELDS_REQUIRED = 14
+        const val KOSPI_EXEC_FIELDS_PER_TICK = 46
     }
 }

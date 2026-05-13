@@ -2,6 +2,10 @@ package com.myinfocar.aicoachstock.data.local.db
 
 import android.content.Context
 import androidx.room.Room
+import com.myinfocar.aicoachstock.data.local.db.alert.PriceAlertDao
+import com.myinfocar.aicoachstock.data.local.db.coach.CoachMessageDao
+import com.myinfocar.aicoachstock.data.local.db.coach.CoachSessionDao
+import com.myinfocar.aicoachstock.data.local.db.entry.EntryChecklistDao
 import com.myinfocar.aicoachstock.data.local.db.principle.PrincipleDao
 import com.myinfocar.aicoachstock.data.local.db.reflection.TradeReflectionDao
 import com.myinfocar.aicoachstock.data.local.db.stock.StockDao
@@ -52,6 +56,18 @@ object DatabaseModule {
 
     @Provides
     fun provideTradeReflectionDao(db: AppDatabase): TradeReflectionDao = db.tradeReflectionDao()
+
+    @Provides
+    fun provideCoachSessionDao(db: AppDatabase): CoachSessionDao = db.coachSessionDao()
+
+    @Provides
+    fun provideCoachMessageDao(db: AppDatabase): CoachMessageDao = db.coachMessageDao()
+
+    @Provides
+    fun provideEntryChecklistDao(db: AppDatabase): EntryChecklistDao = db.entryChecklistDao()
+
+    @Provides
+    fun providePriceAlertDao(db: AppDatabase): PriceAlertDao = db.priceAlertDao()
 
     private const val DB_NAME = "aicoachstock.db"
 }

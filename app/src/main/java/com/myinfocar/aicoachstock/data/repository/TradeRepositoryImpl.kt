@@ -32,4 +32,12 @@ class TradeRepositoryImpl @Inject constructor(
     }
 
     override suspend fun count(): Int = dao.count()
+
+    override suspend fun importedOrderNos(): Set<String> =
+        dao.findAllExternalOrderNos().toSet()
+
+    override suspend fun saveIfAbsent(trade: Trade): Boolean {
+        val rowId = dao.insertIgnoreOnConflict(trade.toEntity())
+        return rowId != -1L
+    }
 }

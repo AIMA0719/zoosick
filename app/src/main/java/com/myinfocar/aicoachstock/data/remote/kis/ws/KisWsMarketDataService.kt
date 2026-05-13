@@ -11,7 +11,9 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.myinfocar.aicoachstock.R
+import com.myinfocar.aicoachstock.domain.alert.AlertScheduler
 import com.myinfocar.aicoachstock.domain.market.ConnectionState
+import com.myinfocar.aicoachstock.domain.repository.PriceAlertRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +44,8 @@ import javax.inject.Inject
 class KisWsMarketDataService : Service() {
 
     @Inject lateinit var stream: KisWebSocketStream
+    @Inject lateinit var alertScheduler: AlertScheduler
+    @Inject lateinit var priceAlertRepo: PriceAlertRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -57,6 +61,14 @@ class KisWsMarketDataService : Service() {
                 Timber.w(t, "FGS에서 WS connect 실패")
                 stopSelf()
             }
+        }
+
+        // 활성 PriceAlert을 WS tick에 연결 (시작 시 1회 + ACTIVE만).
+        scope.launch {
+            runCatching {
+                val active = priceAlertRepo.findActive()
+                alertScheduler.reschedule(active)
+            }.onFailure { Timber.w(it, "AlertScheduler reschedule 실패") }
         }
 
         // 상태 변화 시 알림 본문 갱신.

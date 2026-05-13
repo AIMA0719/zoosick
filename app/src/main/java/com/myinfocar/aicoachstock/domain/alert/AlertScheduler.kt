@@ -11,7 +11,13 @@ import com.myinfocar.aicoachstock.domain.model.PriceAlert
  */
 interface AlertScheduler {
     fun register(alert: PriceAlert)
-    fun cancel(alertId: String)
+
+    /**
+     * suspend: 호출자가 이 함수 완료 후 `repo.delete(id)`를 호출하기 때문에
+     * 구현체는 동기적으로 ticker를 확보하고 WS unsubscribe까지 끝낸 뒤 return해야 함.
+     * (과거: 비동기 launch에서 repo.findById를 했더니 delete가 먼저 끝나서 ticker=null → 구독 leak)
+     */
+    suspend fun cancel(alertId: String)
 
     /** 앱 시작 시 활성 알림들을 한 번에 재등록. */
     fun reschedule(activeAlerts: List<PriceAlert>)

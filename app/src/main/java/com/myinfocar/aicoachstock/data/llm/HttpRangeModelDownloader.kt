@@ -58,37 +58,55 @@ class HttpRangeModelDownloader @Inject constructor(
     override fun download(): Flow<DownloadEvent> = flow {
         targetFile.parentFile?.mkdirs()
 
-        if (targetFile.exists() && sha256File.exists()) {
-            emit(DownloadEvent.Verifying)
-            if (verify().isSuccess) {
-                emit(DownloadEvent.Completed)
-                return@flow
-            }
-            // 검증 실패한 잔재는 지우고 처음부터.
-            targetFile.delete()
-            sha256File.delete()
-        }
-
-        val resumeFrom = if (partFile.exists()) partFile.length() else 0L
-        val request = Request.Builder()
-            .url(modelSource.url)
-            .apply { if (resumeFrom > 0L) header("Range", "bytes=$resumeFrom-") }
-            .build()
-
-        val response = try {
-            httpClient.newCall(request).execute()
-        } catch (t: Throwable) {
-            emit(DownloadEvent.Failed(DownloadEvent.Reason.HTTP_ERROR, t))
+        // verify()가 파일 부재까지 실패로 잡으므로 외부 존재 체크는 생략 (TOCTOU 회피).
+        emit(DownloadEvent.Verifying)
+        if (verify().isSuccess) {
+            emit(DownloadEvent.Completed)
             return@flow
         }
+        // 검증 실패한 잔재는 지우고 처음부터.
+        targetFile.delete()
+        sha256File.delete()
 
-        if (!response.isSuccessful) {
-            val code = response.code
-            response.close()
+        var resumeFrom = if (partFile.exists()) partFile.length() else 0L
+        val initialResume = resumeFrom
+
+        // primary + mirrors 순차 시도. 한 호스트 실패 시 다음 호스트로.
+        var response: okhttp3.Response? = null
+        var lastError: Throwable? = null
+        for (candidate in modelSource.all()) {
+            val request = Request.Builder()
+                .url(candidate)
+                .apply { if (initialResume > 0L) header("Range", "bytes=$initialResume-") }
+                .build()
+            try {
+                val r = httpClient.newCall(request).execute()
+                if (r.isSuccessful) {
+                    // Range를 요청했으나 서버가 무시하고 200(full body) 반환 시,
+                    // resumeFrom에 seek해서 append하면 파일이 손상됨. resumeFrom=0으로 강제.
+                    if (initialResume > 0L && r.code != 206) {
+                        Timber.w("mirror=${candidate}가 Range를 무시함(code=${r.code}). 처음부터 재다운로드.")
+                        resumeFrom = 0L
+                        partFile.delete()
+                    }
+                    response = r
+                    break
+                } else {
+                    Timber.w("모델 다운로드 후보 실패 url=$candidate code=${r.code}")
+                    lastError = IllegalStateException("HTTP ${r.code} from $candidate")
+                    r.close()
+                }
+            } catch (t: Throwable) {
+                Timber.w(t, "모델 다운로드 후보 예외 url=$candidate")
+                lastError = t
+            }
+        }
+
+        if (response == null) {
             emit(
                 DownloadEvent.Failed(
                     DownloadEvent.Reason.HTTP_ERROR,
-                    IllegalStateException("HTTP $code"),
+                    lastError ?: IllegalStateException("모든 미러 실패"),
                 )
             )
             return@flow
@@ -190,5 +208,14 @@ data class ModelLocation(val fileName: String) {
     fun file(context: Context): File = File(context.filesDir, "models/$fileName")
 }
 
-/** 다운로드 원본 URL. */
-data class ModelSource(val url: String)
+/**
+ * 다운로드 원본 URL + 미러 후보.
+ *
+ * primary 실패(네트워크/HTTP 4xx-5xx) 시 mirrors를 순차 시도. 한 호스트가 차단돼도 다른 호스트로 복구.
+ */
+data class ModelSource(
+    val url: String,
+    val mirrors: List<String> = emptyList(),
+) {
+    fun all(): List<String> = listOf(url) + mirrors
+}

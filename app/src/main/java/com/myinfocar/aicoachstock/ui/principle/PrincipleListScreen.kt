@@ -18,7 +18,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -88,20 +87,12 @@ class PrincipleListViewModel @Inject constructor(
 fun PrincipleListScreen(
     onAddClick: () -> Unit,
     onEditClick: (String) -> Unit,
-    onSettingsClick: () -> Unit,
     viewModel: PrincipleListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("매매 원칙") },
-                actions = {
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, contentDescription = "설정")
-                    }
-                },
-            )
+            TopAppBar(title = { Text("매매 원칙") })
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onAddClick) {

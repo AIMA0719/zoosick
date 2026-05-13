@@ -1,5 +1,6 @@
 package com.myinfocar.aicoachstock.ui.watchlist
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -49,16 +50,23 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.myinfocar.aicoachstock.domain.market.MarketDataSource
+import com.myinfocar.aicoachstock.domain.market.MarketHours
 import com.myinfocar.aicoachstock.domain.model.Currency
 import com.myinfocar.aicoachstock.domain.model.Market
+import com.myinfocar.aicoachstock.domain.model.MarketTick
 import com.myinfocar.aicoachstock.domain.model.Stock
 import com.myinfocar.aicoachstock.domain.repository.WatchListEntry
 import com.myinfocar.aicoachstock.domain.repository.WatchListRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -70,6 +78,7 @@ data class WatchListUiState(
 @HiltViewModel
 class WatchListViewModel @Inject constructor(
     private val repo: WatchListRepository,
+    private val marketDataSource: MarketDataSource,
 ) : ViewModel() {
 
     val uiState: StateFlow<WatchListUiState> = repo.observe()
@@ -79,6 +88,42 @@ class WatchListViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = WatchListUiState(),
         )
+
+    /** ticker → 최신 MarketTick. 폴링으로 갱신. */
+    private val _ticks = MutableStateFlow<Map<String, MarketTick>>(emptyMap())
+    val ticks: StateFlow<Map<String, MarketTick>> = _ticks.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            while (true) {
+                val entries = uiState.value.entries
+                if (entries.isNotEmpty() && MarketHours.anyOpen()) {
+                    val activeTickers = entries.map { it.item.ticker }.toSet()
+                    val updates = mutableMapOf<String, MarketTick>()
+                    for (e in entries) {
+                        val market = e.stock?.market ?: Market.KR
+                        val tick = marketDataSource.fetchClosePrice(e.item.ticker, market).getOrNull()
+                        if (tick != null) updates[e.item.ticker] = tick
+                    }
+                    _ticks.update { current ->
+                        // 1) 더 이상 관심 목록에 없는 ticker 제거 (메모리 누수 방지)
+                        // 2) 값이 실제로 바뀐 ticker만 반영 (불필요한 recomposition 방지)
+                        val pruned = current.filterKeys { it in activeTickers }
+                        val merged = pruned.toMutableMap()
+                        var changed = pruned.size != current.size
+                        for ((t, v) in updates) {
+                            if (merged[t]?.price != v.price || merged[t]?.changePct != v.changePct) {
+                                merged[t] = v
+                                changed = true
+                            }
+                        }
+                        if (changed) merged else current
+                    }
+                }
+                delay(POLL_INTERVAL_MS)
+            }
+        }
+    }
 
     fun add(ticker: String, name: String, market: Market, note: String?) {
         viewModelScope.launch {
@@ -102,15 +147,21 @@ class WatchListViewModel @Inject constructor(
     fun remove(id: String) {
         viewModelScope.launch { repo.remove(id) }
     }
+
+    private companion object {
+        const val POLL_INTERVAL_MS = 30_000L
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WatchListScreen(
-    onSettingsClick: () -> Unit,
+    onSearchClick: () -> Unit = {},
+    onItemClick: (String) -> Unit = {},
     viewModel: WatchListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val ticks by viewModel.ticks.collectAsState()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var editingEntry by remember { mutableStateOf<WatchListEntry?>(null) }
 
@@ -119,8 +170,8 @@ fun WatchListScreen(
             TopAppBar(
                 title = { Text("관심종목") },
                 actions = {
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, contentDescription = "설정")
+                    IconButton(onClick = onSearchClick) {
+                        Icon(Icons.Default.Search, contentDescription = "종목 검색")
                     }
                 },
             )
@@ -147,7 +198,9 @@ fun WatchListScreen(
                 items(state.entries, key = { it.item.id }) { entry ->
                     WatchListCard(
                         entry = entry,
-                        onClick = { editingEntry = entry },
+                        tick = ticks[entry.item.ticker],
+                        onClick = { onItemClick(entry.item.ticker) },
+                        onLongClick = { editingEntry = entry },
                         onDelete = { viewModel.remove(entry.item.id) },
                     )
                 }
@@ -193,14 +246,18 @@ private fun EmptyState(modifier: Modifier = Modifier) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun WatchListCard(
     entry: WatchListEntry,
+    tick: MarketTick?,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(onClick = onClick) {
+    Card(
+        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
+    ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -225,6 +282,29 @@ private fun WatchListCard(
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "삭제", modifier = Modifier.size(20.dp))
+                }
+            }
+            tick?.let {
+                Spacer(Modifier.height(6.dp))
+                val market = entry.stock?.market ?: Market.KR
+                val priceText = when (market) {
+                    Market.KR -> "%,d원".format(it.price.toLong())
+                    Market.US -> "$${"%.2f".format(it.price)}"
+                }
+                val pctColor = com.myinfocar.aicoachstock.ui.common.pnlColor(it.changePct)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        priceText,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = pctColor,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "${"%+.2f".format(it.changePct ?: 0.0)}%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = pctColor,
+                    )
                 }
             }
             if (!entry.item.note.isNullOrBlank()) {

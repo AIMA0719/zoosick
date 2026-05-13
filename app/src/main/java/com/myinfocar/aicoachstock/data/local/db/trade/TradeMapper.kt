@@ -19,6 +19,7 @@ fun TradeEntity.toDomain(): Trade = Trade(
     emotionTag = EmotionTag.valueOf(emotionTag),
     linkedChecklistId = linkedChecklistId,
     createdAt = Instant.ofEpochMilli(createdAt),
+    externalOrderNo = externalOrderNo,
 )
 
 fun Trade.toEntity(): TradeEntity = TradeEntity(
@@ -34,4 +35,5 @@ fun Trade.toEntity(): TradeEntity = TradeEntity(
     emotionTag = emotionTag.name,
     linkedChecklistId = linkedChecklistId,
     createdAt = createdAt.toEpochMilli(),
+    externalOrderNo = externalOrderNo,
 )

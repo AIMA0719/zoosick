@@ -7,7 +7,7 @@
 ---
 
 ## 한 문장 요약
-Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 검증 통과 + Phase 1 Stage 1(AI 매매 복기) 코드 완성**, 사용자 실기기 검증 대기.
+Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase 1 Stage 1~12 코드 완성**. Stage 12에서 모의(VTS) 영구 제거 + 추정실적·증권사 의견·분봉·배당·시장 동향 API 통합 + 홈 대시보드 + AI 일일 시장 브리핑. 한투 OpenAPI 실전 전용 종합 증권+AI 코칭 앱.
 
 ---
 
@@ -16,15 +16,15 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 검증 
 | 항목 | 값 |
 |---|---|
 | **LLM** | Gemma 4 E4B (`.litertlm`, 3.66GB) + **LiteRT-LM 0.11.0** (MediaPipe tasks-genai는 deprecated) |
-| **모델 호스트** | HuggingFace `litert-community/gemma-4-E4B-it-litert-lm` 의 `gemma-4-E4B-it.litertlm` |
+| **모델 호스트** | HuggingFace `litert-community/gemma-4-E4B-it-litert-lm` 의 `gemma-4-E4B-it.litertlm` + hf-mirror.com 미러 |
 | **SHA-256** | 호스트 미공개 → 다운로드 시 자동 산출·저장, 매 verify()에서 재계산 |
 | **한투 API** | 실전 키. REST(HTTPS) + WS(ws://, network_security_config로 도메인 cleartext 예외) |
-| **DB** | Room v4 + SQLCipher + Keystore-backed passphrase (32B EncryptedSP) |
+| **DB** | Room v8 + SQLCipher + Keystore-backed passphrase (32B EncryptedSP) |
 | **API 키** | EncryptedSharedPreferences (Room 분리) |
-| **빌드** | Kotlin 2.2.21 / KSP 2.2.21-2.0.4 / Hilt 2.57.2 / AGP 8.7.2 |
+| **빌드** | Kotlin 2.2.21 / KSP 2.2.21-2.0.4 / Hilt 2.57.2 / AGP 8.7.2 / hilt-work 1.2.0 |
 | **applicationId** | `com.myinfocar.aicoachstock` (debug `.debug`) |
 | **해외 실시간** | Phase 1 KR만. 미국 권한은 한투에 별도 신청(영업일 1~7일) — 사용자가 시작 추천 |
-| **41종목 한도** | 본 개발 안에서 실측 (현재는 sort + take 단순 cap) |
+| **41종목 한도** | 본 개발 안에서 실측 (현재는 sort + take 단순 cap, Stage 5에서 차분 update로 강화) |
 
 ---
 
@@ -40,37 +40,268 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 검증 
 - `com.google.mediapipe:tasks-genai 0.10.27` → `com.google.ai.edge.litertlm:litertlm-android 0.11.0`
 - 매니페스트: `usesCleartextTraffic` 제거 → `networkSecurityConfig`로 `ops.koreainvestment.com`만 예외
 - `Json.encodeToString` 시 `encodeDefaults = true` (한투 `grant_type` 누락 버그 fix)
+- `androidx.hilt:hilt-work` + `hilt-compiler` 추가 (Stage 8 WorkManager)
 
-### Phase 1 Stage 1: AI 매매 복기
+### Phase 1 Stage 1: AI 매매 복기 (코드 완성)
 - DB: `TradeReflectionEntity` (FK→Trade, CASCADE, UNIQUE tradeId) / DAO / Mapper
 - Repo: `TradeReflectionRepository` + Impl
 - Service: `ReflectionService` — LLM 호출 + `LESSON:` / `VIOLATED:` 마커 파싱 + 활성 원칙 sanity-filter
 - UI: `ReflectionScreen` (Trade 요약 / 스트리밍 분석 / 위반 chip / 교훈 카드 / 내 메모 / 디스클레이머)
 - 라우트: `reflections/{tradeId}`, TradeList 카드 우하단 "🤖 AI 복기" 진입
-- AppDatabase v3 → v4 (`fallbackToDestructiveMigration` 정책 유지)
-- ✅ BUILD SUCCESSFUL — 사용자 실기기 검증 **대기 중**
+- AppDatabase v3 → v4
+
+### Phase 1 Stage 2: 코치 채팅 ✨ NEW
+- DB: `CoachSessionEntity` (last_message_at index) + `CoachMessageEntity` (FK CASCADE, role/contextRefs JSON)
+- DAO: `CoachSessionDao` / `CoachMessageDao`, observe + insert + touch + rename + delete
+- Repo: `CoachRepository` + Impl — 세션 생성/관리, 메시지 append 시 sessionDao.touch
+- Service: `CoachService` — 활성 원칙 + 최근 매매 10건 + 이전 메시지 8건을 컨텍스트로 묶어 LLM 호출
+- UI: `CoachListScreen` (세션 목록/생성/삭제) + `CoachChatScreen` (말풍선 스타일, 토큰 스트리밍, 디스클레이머)
+- 라우트: `coach`(목록) / `coach/chat/{sessionId}`
+- AppDatabase v4 → v5
+
+### Phase 1 Stage 3: 진입 체크리스트 ✨ NEW
+- DB: `EntryChecklistEntity` (ticker+createdAt index, answers JSON)
+- DAO: `EntryChecklistDao` (observeAll/byTicker, markExecuted)
+- Repo: `EntryChecklistRepository` + Impl
+- Service: `EntryChecklistService` — 활성 원칙별 응답 → LLM → `DECISION: GO/HOLD/STOP` 마커 파싱 (미발견 시 HOLD 폴백)
+- UI: `EntryChecklistScreen` — ticker/현재가/원칙별 응답(FilterChip YES/NO + 자유 텍스트)/메모, 색상 코드된 판정 카드
+- 라우트: `entry`. Settings에서 진입.
+- AppDatabase v5 → v6
+
+### Phase 1 Stage 4: 한투 REST 시세 + 종목 검색 ✨ NEW
+- DTO: `KrPriceResponse`(FHKST01010100) / `UsPriceResponse`(HHDFS00000300)
+- API: `KisMarketRestApi` — Retrofit, @Url 동적 + authorization/appkey/appsecret/tr_id 헤더
+- Source: `KisMarketDataSource` — `MarketDataSource` 구현. Mutex-based rate limiter (100ms gap)
+  - `fetchClosePrice`: 국내/미국 분기, 토큰 자동 보장
+  - `searchStocks`: 6자리 숫자 → KR / 알파벳 → US 단일조회 매칭 (한투 통합 검색 부재로 휴리스틱)
+  - `fetchFundamentals`: stub (Phase 2 별도 정의)
+- DI: `MarketDataApiModule` + `MarketDataSourceBindingModule`
+- UI: `StockSearchScreen` — 검색 + 결과 카드(현재가, 등락률) + "관심종목 추가" 액션
+- 라우트: `stocks/search`. WatchList TopBar 검색 아이콘 + Settings 진입점.
+
+### Phase 1 Stage 5: WS 본 개발 강화 ✨ NEW
+- `MarketHours` — KR 09:00–15:30, US 22:30–05:00 KST window 판정. 비장시간 자동 보류.
+- `KisWebSocketStream` 강화:
+  - **지수 백오프 재연결**: 1→2→4→8→16→30s 상한, intendedConnected가 true인 한 무한 시도
+  - **차분 구독 업데이트**: 새 desired 목록과 현재 구독 set diff → toAdd/toRemove만 send (불필요한 unsubscribe→subscribe 트래픽 차단)
+  - **자동 재구독**: onOpen 시 desired 구독을 일괄 재등록 (재연결 후 복구)
+  - **multi-tick frame 처리**: count*46 필드 chunked로 전체 종목 emit (PoC는 첫 종목만)
+  - **비장시간 게이트**: connect() 시 시간 체크하고 DEGRADED 유지
+
+### Phase 1 Stage 6: PriceAlert + AlertScheduler ✨ NEW
+- DB: `PriceAlertEntity` (status+ticker index)
+- DAO: `PriceAlertDao` (observeAll, findByStatus, updateStatus, delete)
+- Repo: `PriceAlertRepository` + Impl
+- `PriceAlertNotifier` — IMPORTANCE_HIGH 채널, BigTextStyle, 손절🔴/익절🟢 emoji
+- `AlertSchedulerImpl` — `MarketDataStream.ticks(ticker)` collect, direction(ABOVE/BELOW)으로 도달 감지, 트리거 시 Notifier + status=TRIGGERED + 다른 알림 미사용 ticker는 unsubscribe
+- FGS(`KisWsMarketDataService`)가 시작 시 `priceAlertRepo.findActive()` → `alertScheduler.reschedule()`
+- UI: `PriceAlertScreen` — 카드별 상태/타입/방향/타깃, 추가 다이얼로그(타입 선택 → direction 자동 BELOW/ABOVE), 취소/삭제
+- 라우트: `alerts`. Settings 진입점.
+- AppDatabase v6 → v7
+
+### Phase 1 Stage 7: 종목 리서치 Q&A ✨ NEW
+- `ResearchService` — Stock 메타 + 현재가(REST) + 사용자 수동 입력 재무 메모 + 질문 → LLM
+  - 시스템 프롬프트: 투자 권유 금지, "확인되지 않음" 표현, 검증 없는 사용자 메모는 결론 근거 X
+- UI: `ResearchScreen` — ticker/재무메모/질문 입력, 스트리밍 응답, 응답 카드 + 응답 시간 표시
+- 라우트: `research`. Settings 진입점.
+
+### Phase 1 Stage 8: 모델 다운로더 강화 ✨ NEW
+- **미러 호스트**: `ModelSource(url, mirrors)` — primary 실패 시 mirrors 순차 시도, 한 호스트 차단돼도 복구
+  - 기본 미러: `hf-mirror.com`
+- **WorkManager 백그라운드 다운로드**: `ModelDownloadWorker` (HiltWorker, CoroutineWorker)
+  - **NetworkType.UNMETERED 강제** (Wi-Fi only, PRD 절대 하지 마 준수)
+  - `setRequiresBatteryNotLow(true)` + `setRequiresStorageNotLow(true)`
+  - `ExistingWorkPolicy.KEEP` + 진행률 setProgress
+  - 실패 시 Result.retry (WorkManager 자체 백오프)
+- `AICoachApplication`이 `Configuration.Provider`로 직접 초기화 + HiltWorkerFactory 주입
+- `AndroidManifest.xml`에 `WorkManagerInitializer` 제거 (Hilt 통합 시 필수)
+- UI: `LlmPocScreen` DownloadCard에 "백그라운드 다운로드" / "BG 취소" 버튼 추가
+
+✅ 8개 stage 모두 `./gradlew.bat assembleDebug` SUCCESSFUL
+
+### Phase 1 Stage 9: 매매 자동 동기화 (한투 체결 import) ✨ NEW
+- **TradeEntity 확장**: `externalOrderNo` (한투 odno, nullable unique) — null=수동, non-null=한투 import
+- **AppDatabase v7 → v8**
+- **`ApiCredentialStore` 확장**: `accountNo`(CANO 8자리) + `productCode`(ACNT_PRDT_CD, 보통 "01") EncryptedSharedPreferences 저장
+- **API**: `KisTradingApi.fetchDailyCcld` — `/uapi/domestic-stock/v1/trading/inquire-daily-ccld` (실전 TR_ID `TTTC8001R` / 모의 `VTTC8001R`)
+  - 페이징 처리 (ctx_area_nk100 + tr_cont = "N")
+  - 미체결(`tot_ccld_qty == 0`) / 취소(`cncl_yn == "Y"`) 제외
+- **`TradeImportService.importRecent(daysBack=7)`** — 응답을 `Trade`로 매핑(`avg_prvs` = 평균체결가, `tot_ccld_qty` = 실체결수량), 종목 메타도 함께 upsert, 중복은 `saveIfAbsent`로 skip
+- **수동 트리거 UI**:
+  - 매매 탭 TopBar에 🔄 동기화 아이콘 → 스낵바로 "신규 N건" 결과 표시
+  - 자동 import된 거래는 카드에 ☁️ "자동" chip
+  - Settings에 계좌번호 입력 + "🔄 지금 동기화" 버튼
+- **백그라운드 자동**:
+  - `TradeSyncWorker` (HiltWorker, PeriodicWorkRequest 24h)
+  - `Application.onCreate`에서 KEEP 정책으로 enqueue — 최초 실행 시 다음 16:00 KST까지 initialDelay 계산
+  - `NetworkType.CONNECTED` 제약, 실패 시 LINEAR 백오프 15분
+  - API 키/계좌번호 미설정은 자동 skip (재시도 X)
+- **PRD 정책**: "자동 주문 실행"은 여전히 금지. 본 기능은 *이미 체결된* 거래 조회만 — 자동매매 봇과 무관.
+
+✅ `installDebug` SUCCESSFUL — SM-F711N에 설치 완료
+
+### Phase 1 Stage 10: 한투 OpenAPI 11종 통합 ✨ NEW
+사용자가 받아둔 한투 OpenAPI 명세서 9개(엑셀, 국내 5 + 해외 4, 총 ~200 API) 분석 후 PRD 부합한 **조회 API만** 통합.
+
+**PRD 금지로 제외**: 주식주문(현금/신용/정정취소), 예약주문, 해외주식 주문/예약/주간주문 — 자동 주문 실행은 절대 금지.
+
+**통합 완료 API 11종**:
+
+| # | TR_ID | 엔드포인트 | 우리 앱 통합 위치 |
+|---|---|---|---|
+| 1 | `TTTC8434R` / `VTTC8434R` | `inquire-balance` | **HoldingsScreen** (국내 보유 종목 + 평가손익) |
+| 2 | `TTTS3012R` / `VTTS3012R` | `overseas-stock inquire-balance` | **HoldingsScreen** (해외 보유 종목, USD) |
+| 3 | `TTTC8708R` | `inquire-period-profit` | **매매 탭 상단** 30일 누적 실현손익 카드 |
+| 4 | `TTTS3035R` / `VTTS3035R` | `overseas-stock inquire-ccnl` | **TradeImportService** — 미국 매매 자동 import 확장 |
+| 5 | `CTPF1604R` | `search-stock-info` | **StockSearch + ResearchService** — 정확한 종목명/거래소/섹터 (휴리스틱 fallback) |
+| 6 | `FHKST66430300` | `finance/financial-ratio` | **ResearchService 자동 컨텍스트** — ROE/EPS/BPS/부채비율/매출증가율/영업이익증가율 (최근 3기) |
+| 7 | `FHKST03010100` | `inquire-daily-itemchartprice` | **ResearchService 자동 컨텍스트** — 30일 OHLC → 기간 등락률/고저 |
+| 8 | `CTOS5011R` | `countries-holiday` | **MarketHours** — KR 휴장일 캐시 24h, Application.onCreate에서 fetch |
+| 9 | `TTTC8001R` / `VTTC8001R` | `inquire-daily-ccld` | (Stage 9에서 이미) 국내 매매 자동 import |
+| 10 | `FHKST01010100` | `inquire-price` | (PoC #2에서 이미) 국내 현재가 |
+| 11 | `HHDFS00000300` | `overseas-price` | (Stage 4에서 이미) 해외 현재가 |
+
+**핵심 변경**:
+- `KisTradingApi`에 fetchBalance / fetchPeriodProfit / fetchOverseasBalance / fetchOverseasCcnl 4종 추가
+- 새 `KisStockInfoApi` (search-stock-info / financial-ratio / dailyChart / countriesHoliday)
+- 새 도메인 패키지 `domain/account/` — `AccountService` + `Holding` / `AccountSummary` / `PeriodProfitTotal`
+- 새 도메인 패키지 `domain/stockinfo/` — `StockInfoService` (재무/일봉/메타/휴장일)
+- `ResearchService`가 KR 종목 질의 시 재무비율 + 일봉 + 종목메타 **자동 LLM 컨텍스트 주입**
+- `KisMarketDataSource.searchStocks` — 휴리스틱 거래소 추측 제거, 한투 mket_id_cd 기반 정확 분류
+- `MarketHours` — KR 휴장일 set 주입, isOpen()에서 체크
+- `TradeImportService` — KR + US 모두 한 번에 import
+- `AICoachApplication.onCreate` — 시작 시 휴장일 fetch 후 MarketHours 주입
+- Settings에 **📊 보유 종목** 진입점 추가
+- 매매 탭 상단에 **30일 실현손익 카드** (양수 녹색 / 음수 빨강)
+
+**모의 환경 제약**:
+- `TTTC8708R` (기간손익)은 모의투자 미지원 — env != PROD면 "실전 계정만 지원" 메시지로 fail-fast
+- 다른 조회 API는 모의 TR_ID로 자동 분기 (VTTC.../VTTS...)
+
+✅ `installDebug` SUCCESSFUL
+
+### Phase 1 Stage 11: 종목 상세 화면 + AI BUY/HOLD/SELL 코칭 ✨ NEW
+사용자 요청: "토스/키움/카카오 증권/한투 앱처럼 종목 상세에서 차트·호가 다 보이고, 실데이터로 언제 사고 팔지 코칭 받고 싶다."
+
+**추가된 한투 API 3종**:
+- `FHKST01010200` `inquire-asking-price-exp-ccn` — 5호가 + 잔량 + 예상체결가
+- `FHKST01010900` `inquire-investor` — 일별 개인/외국인/기관 순매수량
+- `HHPSTH60100C1` `news-title` — 해외 뉴스 헤드라인 (실전 전용, 종목 심볼 필터)
+
+**새 화면 `StockDetailScreen`** (`stocks/{ticker}`):
+- 상단: 종목명/섹터 chip / 현재가 (한국 관례 — 상승 빨강, 하락 파랑) / 등락 / 거래량
+- **일봉 차트 (30일)** — Compose Canvas로 직접 그리기, 라이브러리 X. 첫 → 마지막 등락에 따라 색상 자동
+- **5호가 카드** — 매도1~3 + 매수1~3 + 총잔량 + 예상체결가
+- **투자자별 매매 카드** — 최근 5일 개인/외국인/기관 순매수량
+- **종목 정보 카드** — 한투 search-stock-info: 종목명/업종/상장주식수/자본금/당해년도 고저
+- **뉴스 카드** (해외 종목) — 한투 news-title 헤드라인
+- **🤖 AI 코칭 카드** — BUY/HOLD/SELL 추천 + 확신도 progress bar + 본문 (상승 BUY 빨강 / SELL 파랑 / HOLD 노랑)
+
+**`TradingAdvisorService`** (새 도메인):
+- 종목 1개에 대해 한투 API에서 *모든 실데이터* 한 번에 fetch:
+  - 현재가 (`inquire-price`)
+  - 일봉 30일 (`inquire-daily-itemchartprice`)
+  - 재무비율 3기 (`financial-ratio`)
+  - 종목 메타 (`search-stock-info`)
+  - 투자자별 매매 5일 (`inquire-investor`)
+  - 호가 잔량 (`inquire-asking-price-exp-ccn`)
+  - 해외 뉴스 (`news-title` — US 종목만)
+  - 본인 보유 여부 (`inquire-balance` — KR/US 자동 분기)
+  - 활성 매매 원칙 (Room)
+  - 이 종목 최근 본인 매매 5건 (Room)
+- 위 데이터를 모두 LLM 프롬프트에 단일 user message로 주입
+- 응답에서 `RECOMMENDATION: BUY/HOLD/SELL` + `CONFIDENCE: 0-100` 마커 파싱
+- 미발견 시 안전한 HOLD + 30 폴백
+
+**관심 탭 강화**:
+- `WatchListViewModel`이 30초 폴링으로 `MarketDataSource.fetchClosePrice` 호출 → `ticks` StateFlow 갱신
+- `MarketHours.anyOpen()` 체크 — 비장시간엔 폴링 skip (REST 한도 보호)
+- 카드에 가격 + 등락률 실시간 표시 (상승 빨강 / 하락 파랑)
+- 카드 **터치** → 종목 상세 화면 / 카드 **롱터치** → 메모 편집 (기존 동작 보존)
+
+**라우트**:
+- `stocks/{ticker}` — StockDetailScreen
+- WatchListScreen에서 `onItemClick(ticker)` → `navigate(stockDetail(ticker))`
+
+**Compose Canvas 차트**:
+- `PriceLineChart` — 외부 라이브러리 없이 라인 차트만 그림
+- 시작점과 끝점에 작은 원 표시
+- 마지막 가격 > 첫 가격 → 녹색, 반대 → 빨강 (글로벌 관례; 상승이라는 추세를 표시)
+
+✅ `installDebug` SUCCESSFUL
+
+### Phase 1 Stage 12: 종합 증권+AI 코칭 앱 탈바꿈 ✨ NEW
+사용자 요청: "모의는 절대 안 함" + "미사용 API 활용해서 진짜 증권 앱 + AI 코칭 슬로건에 걸맞게 탈바꿈".
+
+**환경 단순화 (memory 저장됨)**:
+- `KisEnv` enum에서 VTS 제거 — PROD 단일 멤버
+- 모든 코드의 `if env == PROD` 분기 단순화 (잔고/체결/손익 등 항상 실전 TR_ID 사용)
+- `KisRateLimiter` — PROD 단일 gap(60ms)로 단순화, ApiCredentialStore 의존성 제거
+- Settings UI에서 환경 선택 SegmentedButton 제거
+- 모의 미지원 TR(`TTTC8708R` 등) fail-fast 제거 — 그냥 호출
+- 관련 memory: `feedback_no_paper_trading.md` (다음 세션도 자동 적용)
+
+**추가된 한투 API 7종**:
+
+| TR_ID | 엔드포인트 | 우리 앱 활용 |
+|---|---|---|
+| `HHKST668300C0` | `estimate-perform` | **AdvisorService 자동 컨텍스트** — 애널리스트 컨센서스 매출/영업이익/순이익/EPS |
+| `FHKST663300C0` | `invest-opinion` | **AdvisorService 자동 컨텍스트** — 증권사별 투자의견 + 목표주가 + 괴리율 (최근 60일 5건) |
+| `FHKST03010200` | `inquire-time-itemchartprice` | **분봉 차트** — StockInfoService.fetchTimeChart (호출자가 토글로 사용) |
+| `HHKDB669102C0` | `ksdinfo/dividend` | **홈 화면 "다가오는 배당" 카드** — 보유 종목과 매칭, 90일 내 배당 일정 |
+| `FHPTJ04040000` | `inquire-investor-daily-by-market` | **AI 시장 브리핑** — KOSPI 7일 외국인/기관/개인 흐름 |
+| `FHPST01060000` | `mktfunds` | **AI 시장 브리핑** — 시장 예수금 + 신용잔고 추이 |
+
+**새 화면 — 홈 대시보드** (`home`):
+- BottomNav **첫 탭으로 진입** (시작점 변경: `PRINCIPLES` → `HOME`)
+- **🌅 오늘 AI 코칭 브리핑 카드** — 버튼 클릭 시 LLM이 종합 분석:
+  - KOSPI 외국인/기관 7일 흐름
+  - 시장 예수금 추이
+  - 내 보유 종목 평가손익
+  - 관심 종목 N개 현재가
+  - 활성 매매 원칙
+  → "오늘 한 줄 + 시장 + 내 보유 + 관심 + 원칙 체크" 형식
+- **💼 내 자산 카드** — 총 평가금액 / 평가손익 / 예수금 (한투 잔고)
+- **💰 다가오는 배당 카드** — 보유 종목 중 90일 내 배당 일정만 필터
+- **📊 내 보유 미니** — 상위 5개 (터치 → 종목 상세)
+- **👀 관심 종목 미니** — 상위 5개 (현재가 자동 폴링, 터치 → 종목 상세)
+
+**새 서비스 — `MarketBriefingService`**:
+- 한투 시장 동향 API들 (외국인/기관/예수금) + 내 보유/관심/원칙 → LLM 단일 user message
+- 응답: "🌅 오늘 한 줄 → 📊 시장 → 💼 내 보유 → 👀 관심 → ✅ 원칙 체크"
+- 투자 권유 톤 금지, 8~12줄 짧게
+
+**`TradingAdvisorService` 강화**:
+- 추정실적(`HHKST668300C0`) + 증권사 투자의견(`FHKST663300C0`) 자동 컨텍스트 추가
+- AI 응답이 매출/영업이익 전망 + 증권사 목표가 vs 현재가 괴리율까지 종합
+
+**BottomNav 재정렬 (6탭)**:
+- 홈 / 관심 / 매매 / 코치 / 원칙 / 설정 (실제 증권 앱처럼 홈 우선)
+
+✅ `installDebug` SUCCESSFUL
+
+### UI 정리 (BottomNav 5탭)
+- BottomTab에 **SETTINGS** 추가 (5개: 원칙/매매/관심/코치/설정)
+- 기존 Principle/Trade/WatchList/Coach 화면의 우상단 ⚙️ 아이콘 모두 제거
+- SettingsScreen은 BottomTab 진입 시 navigationIcon(뒤로) 숨김 (`onBack: () -> Unit?` nullable)
 
 ---
 
 ## 🚧 진행 중 / 다음 시작점
 
-**바로 다음**: 사용자가 Stage 1 실기기 검증 (`installDebug` → 원칙 등록 → 매매 입력 → AI 복기 생성). 결과 확인 후 Stage 2 진입.
+**바로 다음**: 사용자가 Phase 1 전체 실기기 검증 (`installDebug` → 원칙 등록 → 매매 입력 → 복기/채팅/체크리스트/검색/알림/리서치/BG 다운로드/체결 자동 import).
 
-검증 OK면 Stage 1 task `#7` completed로 마크 후 Stage 2 시작.
+회귀 검증 항목:
+1. Stage 1 (복기): 기존 동작 유지 확인
+2. Stage 2 (채팅): 세션 생성 → 메시지 전송 → 스트리밍 OK
+3. Stage 3 (체크리스트): 원칙별 응답 → AI 평가 → GO/HOLD/STOP
+4. Stage 4 (검색): 종목코드 → REST 응답 + 관심종목 추가
+5. Stage 5 (WS): FGS 30분 유지 + 강제 끊김 시 지수 백오프 재연결
+6. Stage 6 (알림): 알림 등록 → tick 도달 → 푸시 + status=TRIGGERED
+7. Stage 7 (리서치): 종목 + 메모 + 질문 → AI 답변
+8. Stage 8 (BG 다운로드): WorkManager Wi-Fi 강제 + 진행률
 
----
-
-## ⏳ Phase 1 남은 Stage (vertical slice, 매 stage 끝나면 빌드 검증)
-
-| Stage | 작업 | 의존 |
-|---|---|---|
-| **2** | **코치 채팅** (CoachSession/CoachMessage DB + ChatViewModel + ChatScreen, 스트리밍) | LLM PoC 인프라 |
-| 3 | **진입 체크리스트** (EntryChecklist DB + GO/HOLD/STOP AI 판정) | LLM, 원칙 |
-| 4 | **한투 REST 시세 폴백 + 종목 검색** (MarketDataSource 구현, KisMarketRestApi) | KIS REST |
-| 5 | **WS 본 개발 강화** (41종목 우선순위 큐, 지수 백오프, 비장시간 스케줄) | PoC #2 코어 |
-| 6 | **PriceAlert + AlertScheduler** (손절/익절 알림 트리거 — FGS 안에서 tick 감지) | PoC #3, MarketDataSource |
-| 7 | **종목 리서치 Q&A** (Stock 메타 + 수동 재무 + AI 질의) | LLM, Stage 4 |
-| 8 | **모델 다운로더 강화** (WorkManager + Wi-Fi 강제 + 미러 호스트) | PoC #1 코어 |
+검증 OK면 Phase 1 출시 후보. Phase 2 (통계 대시보드) 진입.
 
 ---
 
@@ -78,23 +309,32 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 검증 
 
 ### Domain
 - `domain/llm/LLMEngine.kt` `ModelDownloader.kt`
-- `domain/market/MarketDataStream.kt` `MarketDataSource.kt`
+- `domain/market/MarketDataStream.kt` `MarketDataSource.kt` `MarketHours.kt` ✨
 - `domain/alert/AlertScheduler.kt`
 - `domain/auth/ApiCredentialStore.kt`
-- `domain/repository/*` (TradeRepository, StockRepository, WatchListRepository, TradingPrincipleRepository, TradeReflectionRepository)
-- `domain/reflection/ReflectionService.kt` ← Stage 1
+- `domain/repository/*` (Trade, Stock, WatchList, TradingPrinciple, TradeReflection, **Coach**, **EntryChecklist**, **PriceAlert** ✨)
+- `domain/reflection/ReflectionService.kt`
+- `domain/coach/CoachService.kt` ✨
+- `domain/entry/EntryChecklistService.kt` ✨
+- `domain/research/ResearchService.kt` ✨
 
 ### Data
-- `data/llm/LiteRtLmLLMEngine.kt` `HttpRangeModelDownloader.kt` `LLMModule.kt`
-- `data/remote/kis/ws/KisWebSocketStream.kt` `KisWsMarketDataService.kt` `MarketDataModule.kt`
+- `data/llm/LiteRtLmLLMEngine.kt` `HttpRangeModelDownloader.kt` `ModelDownloadWorker.kt` ✨ `LLMModule.kt`
+- `data/remote/kis/ws/KisWebSocketStream.kt` (백오프/차분 구독/multi-tick) `KisWsMarketDataService.kt`
+- `data/remote/kis/market/KisMarketRestApi.kt` `KisMarketDataSource.kt` ✨
 - `data/remote/kis/auth/KisAuthService.kt` `rest/KisAuthApi.kt`
-- `data/local/db/` (AppDatabase v4, TypeConverters, principle / trade / stock / watchlist / reflection 5개 엔티티)
+- `data/local/db/` (AppDatabase v7, 9 entities: principle / trade / stock / watchlist / reflection / coach session+message / entry / alert)
 - `data/local/secure/SecurePassphraseProvider.kt` `ApiCredentialStoreImpl.kt`
+- `data/alert/AlertSchedulerImpl.kt` `PriceAlertNotifier.kt` ✨
 
 ### UI
-- `ui/poc/LlmPocScreen.kt` (모델 다운로드/로드/추론 PoC)
-- `ui/poc/KisWsPocScreen.kt` (WS PoC + FGS 30분+ 검증)
-- `ui/reflection/ReflectionScreen.kt` ← Stage 1
+- `ui/poc/LlmPocScreen.kt` (PoC #1 + BG 다운로드) / `ui/poc/KisWsPocScreen.kt` (PoC #2/3)
+- `ui/reflection/ReflectionScreen.kt`
+- `ui/coach/CoachListScreen.kt` `CoachChatScreen.kt` ✨
+- `ui/entry/EntryChecklistScreen.kt` ✨
+- `ui/search/StockSearchScreen.kt` ✨
+- `ui/alert/PriceAlertScreen.kt` ✨
+- `ui/research/ResearchScreen.kt` ✨
 - `ui/principle/` `ui/trade/` `ui/watchlist/` `ui/settings/` `ui/navigation/`
 
 ---
@@ -105,7 +345,7 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 검증 
 - API 키/토큰 하드코딩, 평문 Room 저장, 자동 주문, 외부 LLM 전송, 목업 응답, 투자 권유 톤
 - FGS 타입 미지정, POST_NOTIFICATIONS 누락, 광범위 외부 저장소 권한
 - 모델 .task SHA-256 검증 없이 로드, HTTP 평문, 한투 REST 분당 한도 무시, WS 41종목 한도 무시
-- 비장시간 WS 유지 (KR 09:00–15:30 / US 22:30–05:00 KST)
+- 비장시간 WS 유지 (KR 09:00–15:30 / US 22:30–05:00 KST) — Stage 5에서 MarketHours로 가드
 - Compose `remember { mutableStateOf }` ViewModel 대용 (반드시 ViewModel + StateFlow)
 - KDoc 안에 `/*` 패턴 (Kotlin 2.2 nested comment로 해석됨 — 풀어쓰기)
 
@@ -123,7 +363,7 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 검증 
 ## 🛠 빌드 + 검증 명령
 
 ```powershell
-# 디버그 빌드
+# 디버그 빌드 (마지막 확인: BUILD SUCCESSFUL)
 ./gradlew.bat assembleDebug
 
 # 실기기 설치 (Z Fold 7 USB + USB 디버깅 ON)
@@ -131,16 +371,23 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 검증 
 
 # instrumented test (SQLCipher PoC)
 ./gradlew.bat :app:connectedDebugAndroidTest
+
+# 단위 테스트
+./gradlew.bat :app:testDebugUnitTest
 ```
 
-빌드 시간: 풀빌드 ~45초, 증분 ~20초.
+빌드 시간: 풀빌드 ~3분, 증분 ~15초.
 
 ---
 
 ## ⚠️ 알아둘 함정
 
 1. **Stock에는 `name` 없음** — `nameKo` / `nameEn` 사용
-2. **AppDatabase v4 `fallbackToDestructiveMigration`** — schema 변경 시 사용자 DB 와이프됨. Phase 1 후반에 Migration 작성하며 제거.
+2. **AppDatabase v7 `fallbackToDestructiveMigration`** — schema 변경 시 사용자 DB 와이프됨. Phase 1 후반에 Migration 작성하며 제거.
 3. **HuggingFace 파일명**: repo는 `...-litert-lm`, 파일은 `....litertlm` (확장자). 헷갈리지 말 것.
 4. **한투 WS는 `ws://` 평문** — `network_security_config.xml`에서 `ops.koreainvestment.com`만 cleartext 예외
 5. **Kotlin 2.2 엄격**: inline 명명 주석 `/* foo = */` 금지, KDoc 안에 `/*` 패턴 금지 (둘 다 nested comment 오해)
+6. **WorkManager Hilt 통합**: `AndroidManifest.xml`에서 `WorkManagerInitializer` `tools:node="remove"` 필수. 빠지면 기본 초기화가 Hilt 설정을 무시하고 worker 주입 실패.
+7. **AlertScheduler tick 구독은 FGS 안에서만 동작**: 앱이 백그라운드인데 FGS가 꺼져 있으면 알림 감지 불가. PoC #3 화면 또는 본 개발 시작 화면에서 FGS 자동 시작 UX 필요.
+8. **MarketHours 휴장일 OOS**: 평일 시간 윈도만 판정. 공휴일/대체휴일/조기 폐장은 Phase 2 이후.
+9. **종목 검색 휴리스틱**: 통합 검색 API 부재로 단일 조회 매칭. 사용자가 정확한 ticker를 입력해야 함. Phase 2에서 종목 마스터 다운로드 + 로컬 색인.
