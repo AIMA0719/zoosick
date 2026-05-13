@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  기본은 cleartext 차단(HTTPS only). 한투 WebSocket이 ws:// (평문)만 제공하므로
+  ops.koreainvestment.com 도메인에만 예외적으로 cleartext 허용.
+  REST(openapi/openapivts)는 모두 https라 영향 없음.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">ops.koreainvestment.com</domain>
+    </domain-config>
+</network-security-config>

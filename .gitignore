@@ -1,0 +1,22 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.jks
+*.keystore
+local.properties
+
+# Model artifacts (do not commit Gemma .task files)
+/models/
+*.task
+*.litertlm
+
+# Claude Code local settings (개인 설정)
+/.claude/
