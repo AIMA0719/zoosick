@@ -3,6 +3,7 @@ package com.myinfocar.aicoachstock.ui.search
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,10 +15,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -27,12 +27,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +44,10 @@ import com.myinfocar.aicoachstock.domain.model.MarketTick
 import com.myinfocar.aicoachstock.domain.model.Stock
 import com.myinfocar.aicoachstock.domain.repository.StockRepository
 import com.myinfocar.aicoachstock.domain.repository.WatchListRepository
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.EmptyState
+import com.myinfocar.aicoachstock.ui.common.pnlColor
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -120,18 +122,28 @@ fun StockSearchScreen(
     val state by viewModel.ui.collectAsState()
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("종목 검색 (한투 REST)") },
+                title = { Text("종목 검색", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = AppTokens.space16, vertical = AppTokens.space12),
+            verticalArrangement = Arrangement.spacedBy(AppTokens.space12),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = state.query,
@@ -141,40 +153,59 @@ fun StockSearchScreen(
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.size(8.dp))
+                Spacer(Modifier.size(AppTokens.space8))
                 Button(
                     onClick = viewModel::search,
                     enabled = !state.isSearching && state.query.isNotBlank(),
                 ) {
-                    if (state.isSearching) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    if (state.isSearching) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Default.Search, contentDescription = "검색")
                 }
             }
 
             Text(
-                "한투 REST 단일 조회 기반. 6자리 숫자 → 국내, 알파벳 → 미국으로 시도합니다.",
+                "6자리 숫자 → 국내, 알파벳 → 미국으로 시도합니다.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             state.errorMessage?.let { msg ->
-                Text("❌ $msg", color = MaterialTheme.colorScheme.error)
+                Text(
+                    "❌ $msg",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
             state.addedTicker?.let { ticker ->
-                Text("✅ $ticker 관심종목 추가 완료", color = MaterialTheme.colorScheme.primary)
+                Text(
+                    "✅ $ticker 관심종목 추가 완료",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
 
-            if (state.isSearching) {
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            when {
+                state.isSearching -> Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-            } else if (state.results.isEmpty() && !state.isSearching && state.query.isNotBlank() && state.errorMessage == null && state.addedTicker == null) {
-                Text(
+
+                state.results.isEmpty() && state.query.isBlank() -> EmptyState(
+                    title = "종목을 검색해 보세요",
+                    description = "관심 있는 종목코드를 입력하면 한투 REST 단일 조회로 현재가까지 보여드려요.",
+                    icon = "🔍",
+                )
+
+                state.results.isEmpty() && !state.isSearching && state.errorMessage == null && state.addedTicker == null -> Text(
                     "🔍 위에 종목코드를 입력하고 검색을 누르세요.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+                else -> LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(AppTokens.space8),
+                    contentPadding = PaddingValues(bottom = AppTokens.space24),
+                ) {
                     items(state.results, key = { "${it.stock.ticker}-${it.stock.exchange}" }) { hit ->
                         ResultCard(hit = hit, onAdd = { viewModel.addToWatchList(hit.stock) })
                     }
@@ -184,34 +215,54 @@ fun StockSearchScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ResultCard(hit: SearchHit, onAdd: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    AppCard(padding = AppTokens.space16) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    hit.stock.ticker,
+                    hit.stock.nameKo,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.size(8.dp))
-                Text(hit.stock.nameKo, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.weight(1f))
-                AssistChip(onClick = {}, label = { Text(hit.stock.exchange.name) }, enabled = false)
+                Spacer(Modifier.height(AppTokens.space2))
+                Text(
+                    "${hit.stock.ticker} · ${hit.stock.exchange.name}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(AppTokens.space4))
+                val priceText = when (hit.stock.market) {
+                    Market.KR -> hit.tick?.price?.toLong()?.let { "${"%,d".format(it)}원" } ?: "—"
+                    Market.US -> hit.tick?.price?.let { "$${"%.2f".format(it)}" } ?: "—"
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        priceText,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    hit.tick?.changePct?.let {
+                        Spacer(Modifier.size(AppTokens.space8))
+                        Text(
+                            "${"%+.2f".format(it)}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = pnlColor(it),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(4.dp))
-            val priceText = when (hit.stock.market) {
-                Market.KR -> hit.tick?.price?.toLong()?.let { "${"%,d".format(it)}원" } ?: "—"
-                Market.US -> hit.tick?.price?.let { "$${"%.2f".format(it)}" } ?: "—"
+            IconButton(
+                onClick = onAdd,
+                modifier = Modifier.size(AppTokens.touchTarget),
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "관심종목에 추가",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
-            Text(
-                "현재가 $priceText" + (hit.tick?.changePct?.let { "  ·  ${"%+.2f".format(it)}%" }.orEmpty()),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onAdd) { Text("관심종목에 추가") }
         }
     }
 }

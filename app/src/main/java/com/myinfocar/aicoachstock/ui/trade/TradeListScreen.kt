@@ -21,19 +21,20 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
@@ -54,6 +55,13 @@ import com.myinfocar.aicoachstock.domain.model.Trade
 import com.myinfocar.aicoachstock.domain.model.TradeSide
 import com.myinfocar.aicoachstock.domain.repository.TradeRepository
 import com.myinfocar.aicoachstock.domain.sync.TradeImportService
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.EmptyState
+import com.myinfocar.aicoachstock.ui.common.KrDownBlue
+import com.myinfocar.aicoachstock.ui.common.KrUpRed
+import com.myinfocar.aicoachstock.ui.common.ListLoadingSkeleton
+import com.myinfocar.aicoachstock.ui.common.pnlColor
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -101,7 +109,6 @@ class TradeListViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            // 실패는 무시 — 누적 손익은 보조 정보.
             accountService.fetchPeriodProfit(30).getOrNull()?.let { _profit.value = it }
         }
     }
@@ -115,12 +122,11 @@ class TradeListViewModel @Inject constructor(
                 it.copy(
                     isSyncing = false,
                     message = result.fold(
-                        onSuccess = { s -> "✅ 동기화: 신규 ${s.inserted}건 (${s.range.first}~${s.range.second})" },
-                        onFailure = { e -> "❌ ${e.message}" },
+                        onSuccess = { s -> "동기화: 신규 ${s.inserted}건 (${s.range.first}~${s.range.second})" },
+                        onFailure = { e -> "동기화 실패: ${e.message}" },
                     ),
                 )
             }
-            // 동기화 후 손익도 갱신.
             accountService.fetchPeriodProfit(30).getOrNull()?.let { _profit.value = it }
         }
     }
@@ -140,6 +146,7 @@ fun TradeListScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val syncState by viewModel.sync.collectAsState()
+    val profit by viewModel.profit.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(syncState.message) {
         val msg = syncState.message ?: return@LaunchedEffect
@@ -147,51 +154,78 @@ fun TradeListScreen(
         viewModel.dismissSyncMessage()
     }
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("매매기록") },
+                title = { Text("매매기록", style = MaterialTheme.typography.titleLarge) },
                 actions = {
                     IconButton(onClick = viewModel::syncNow, enabled = !syncState.isSyncing) {
                         if (syncState.isSyncing) {
-                            CircularProgressIndicator(modifier = Modifier.width(20.dp).height(20.dp))
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                         } else {
                             Icon(Icons.Default.Refresh, contentDescription = "한투 체결 동기화")
                         }
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddClick) {
+            FloatingActionButton(
+                onClick = onAddClick,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                elevation = FloatingActionButtonDefaults.elevation(
+                    defaultElevation = 0.dp,
+                    pressedElevation = 0.dp,
+                    focusedElevation = 0.dp,
+                    hoveredElevation = 0.dp,
+                ),
+            ) {
                 Icon(Icons.Default.Add, contentDescription = "매매기록 추가")
             }
         },
     ) { padding ->
-        val profit by viewModel.profit.collectAsState()
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            profit?.let { ProfitSummaryCard(it) }
-            when {
-                state.isLoading -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) { CircularProgressIndicator() }
+        when {
+            state.isLoading -> ListLoadingSkeleton(modifier = Modifier.padding(padding))
 
-                state.items.isEmpty() -> EmptyState(modifier = Modifier)
-
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(state.items, key = { it.id }) { trade ->
-                        TradeCard(
-                            trade = trade,
-                            onClick = { onEditClick(trade.id) },
-                            onReflect = { onReflectClick(trade.id) },
-                        )
+            state.items.isEmpty() -> Column(
+                modifier = Modifier.fillMaxSize().padding(padding),
+            ) {
+                profit?.let {
+                    Box(modifier = Modifier.padding(horizontal = AppTokens.space16, vertical = AppTokens.space12)) {
+                        ProfitSummaryCard(it)
                     }
                 }
+                EmptyState(
+                    title = "아직 기록된 매매가 없어요",
+                    description = "+ 버튼으로 체결한 매매를 기록하거나, 우상단 🔄 로 한투 체결을 가져오세요.",
+                    icon = "📝",
+                )
+            }
+
+            else -> LazyColumn(
+                contentPadding = PaddingValues(
+                    horizontal = AppTokens.space16,
+                    vertical = AppTokens.space12,
+                ),
+                verticalArrangement = Arrangement.spacedBy(AppTokens.space8),
+                modifier = Modifier.fillMaxSize().padding(padding),
+            ) {
+                profit?.let {
+                    item { ProfitSummaryCard(it) }
+                }
+                items(state.items, key = { it.id }) { trade ->
+                    TradeCard(
+                        trade = trade,
+                        onClick = { onEditClick(trade.id) },
+                        onReflect = { onReflectClick(trade.id) },
+                    )
+                }
+                item { Spacer(Modifier.height(AppTokens.space24)) }
             }
         }
     }
@@ -199,24 +233,34 @@ fun TradeListScreen(
 
 @Composable
 private fun ProfitSummaryCard(profit: PeriodProfitTotal) {
-    val pnlColor = com.myinfocar.aicoachstock.ui.common.pnlColor(profit.totalRealizedPnl)
-    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Column(Modifier.padding(16.dp)) {
+    val color = pnlColor(profit.totalRealizedPnl)
+    AppCard(padding = AppTokens.space20) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
             Text(
-                "최근 30일 실현손익  (${profit.rangeStart} ~ ${profit.rangeEnd})",
-                style = MaterialTheme.typography.labelMedium,
+                "최근 30일 실현손익",
+                style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(4.dp))
             Text(
-                "${"%+,d".format(profit.totalRealizedPnl.toLong())}원  (${"%+.2f".format(profit.pnlRate)}%)",
-                style = MaterialTheme.typography.headlineSmall,
-                color = pnlColor,
-                fontWeight = FontWeight.Bold,
+                "${profit.rangeStart} ~ ${profit.rangeEnd}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(AppTokens.space4))
             Text(
-                "매수 ${"%,d".format(profit.totalBuy.toLong())}원  ·  매도 ${"%,d".format(profit.totalSell.toLong())}원  ·  수수료 ${"%,d".format(profit.totalFee.toLong())}원",
+                "${"%+,d".format(profit.totalRealizedPnl.toLong())}원",
+                style = MaterialTheme.typography.displaySmall,
+                color = color,
+            )
+            Text(
+                "${"%+.2f".format(profit.pnlRate)}%",
+                style = MaterialTheme.typography.titleMedium,
+                color = color,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(AppTokens.space4))
+            Text(
+                "매수 ${"%,d".format(profit.totalBuy.toLong())}원 · 매도 ${"%,d".format(profit.totalSell.toLong())}원 · 수수료 ${"%,d".format(profit.totalFee.toLong())}원",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -224,26 +268,10 @@ private fun ProfitSummaryCard(profit: PeriodProfitTotal) {
     }
 }
 
-@Composable
-private fun EmptyState(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("아직 기록된 매매가 없어요.", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "+ 버튼으로 체결한 매매를 기록해보세요.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TradeCard(trade: Trade, onClick: () -> Unit, onReflect: () -> Unit) {
-    val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+    val dateFormatter = DateTimeFormatter.ofPattern("MM/dd HH:mm")
         .withZone(ZoneId.systemDefault())
     val moneyFormat = remember(trade.market) {
         when (trade.market) {
@@ -252,76 +280,70 @@ private fun TradeCard(trade: Trade, onClick: () -> Unit, onReflect: () -> Unit) 
         }
     }
 
-    Card(onClick = onClick) {
-        Column(Modifier.padding(16.dp)) {
+    AppCard(onClick = onClick, padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space6)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SideBadge(side = trade.side)
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(AppTokens.space8))
                 Text(
                     trade.ticker,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.width(8.dp))
-                AssistChip(
-                    onClick = {},
-                    label = { Text(trade.market.label()) },
-                    enabled = false,
+                Spacer(Modifier.width(AppTokens.space8))
+                Text(
+                    trade.market.label(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (trade.isImported) {
-                    Spacer(Modifier.width(4.dp))
-                    AssistChip(
-                        onClick = {},
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Cloud,
-                                contentDescription = "한투 자동 import",
-                                modifier = Modifier.size(14.dp),
-                            )
-                        },
-                        label = { Text("자동") },
-                        enabled = false,
+                    Spacer(Modifier.width(AppTokens.space4))
+                    Icon(
+                        Icons.Default.Cloud,
+                        contentDescription = "한투 자동 import",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
                     dateFormatter.format(trade.executedAt),
                     style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     "${moneyFormat.format(trade.price)} × ${trade.qty}주",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Text(
-                    moneyFormat.format(trade.price * trade.qty),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            if (trade.reasonText != null && trade.reasonText.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    trade.reasonText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    moneyFormat.format(trade.price * trade.qty),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
             }
-            Spacer(Modifier.height(4.dp))
+            if (!trade.reasonText.isNullOrBlank()) {
+                Text(
+                    trade.reasonText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "감정: ${trade.emotionTag.label()}",
-                    style = MaterialTheme.typography.labelMedium,
+                    "감정 ${trade.emotionTag.label()}",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                androidx.compose.material3.TextButton(onClick = onReflect) {
-                    Text("🤖 AI 복기")
+                TextButton(onClick = onReflect) {
+                    Text("AI 복기")
                 }
             }
         }
@@ -331,13 +353,13 @@ private fun TradeCard(trade: Trade, onClick: () -> Unit, onReflect: () -> Unit) 
 @Composable
 private fun SideBadge(side: TradeSide) {
     val bg = when (side) {
-        TradeSide.BUY -> Color(0xFFE53935)
-        TradeSide.SELL -> Color(0xFF1E88E5)
+        TradeSide.BUY -> KrUpRed
+        TradeSide.SELL -> KrDownBlue
     }
     Box(
         modifier = Modifier
-            .background(bg, RoundedCornerShape(4.dp))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
+            .background(bg, RoundedCornerShape(AppTokens.radius8))
+            .padding(horizontal = AppTokens.space8, vertical = 2.dp),
     ) {
         Text(
             side.label(),

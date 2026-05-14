@@ -17,8 +17,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -293,10 +291,9 @@ private fun PriceHeader(state: StockDetailUiState) {
 
 @Composable
 private fun ChartCard(bars: List<DailyChartBar>) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
+    AppCard(padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
             Text("일봉 차트  (최근 ${bars.size}거래일)", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(4.dp))
             // bars는 최근→과거 순으로 옴 — 시간 순으로 뒤집기.
             val prices = bars.mapNotNull { it.stckClpr?.toDoubleOrNull() }.reversed()
             PriceLineChart(prices = prices)
@@ -318,8 +315,8 @@ private fun ChartCard(bars: List<DailyChartBar>) {
 private fun AskingCard(resp: AskingPriceResponse, market: Market) {
     val levels = resp.output1 ?: return
     val sums = resp.output2
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    AppCard(padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
             Text("호가  (5호가)", style = MaterialTheme.typography.titleMedium)
             sums?.let {
                 if (!it.antcCnpr.isNullOrBlank() && it.antcCnpr != "0") {
@@ -330,7 +327,7 @@ private fun AskingCard(resp: AskingPriceResponse, market: Market) {
                     )
                 }
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(AppTokens.space4))
             val askColor = com.myinfocar.aicoachstock.ui.common.KrDownBlue
             val bidColor = com.myinfocar.aicoachstock.ui.common.KrUpRed
             listOf(
@@ -363,8 +360,8 @@ private fun LevelRow(label: String, price: String?, qty: String?, color: Color) 
 
 @Composable
 private fun InvestorCard(rows: List<InvestorDailyItem>) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    AppCard(padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
             Text("투자자별 순매수 (최근 ${rows.size}일)", style = MaterialTheme.typography.titleMedium)
             rows.forEach { d ->
                 Text(
@@ -378,8 +375,8 @@ private fun InvestorCard(rows: List<InvestorDailyItem>) {
 
 @Composable
 private fun InfoCard(info: StockInfoOutput) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    AppCard(padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
             Text("종목 정보", style = MaterialTheme.typography.titleMedium)
             info.prdtName?.let { Text("• $it", fontWeight = FontWeight.Medium) }
             info.idxBztpSmallName?.let { Text("• 업종: $it") }
@@ -393,11 +390,11 @@ private fun InfoCard(info: StockInfoOutput) {
 
 @Composable
 private fun NewsCard(news: List<OverseasNewsItem>) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    AppCard(padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
             Text("뉴스 (한투 해외뉴스종합)", style = MaterialTheme.typography.titleMedium)
             news.forEach { n ->
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space2)) {
                     Text(n.title.orEmpty(), style = MaterialTheme.typography.bodyMedium)
                     Text(
                         "${n.dataDt ?: ""} ${n.source ?: ""}",

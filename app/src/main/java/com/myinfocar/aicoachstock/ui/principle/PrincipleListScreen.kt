@@ -1,5 +1,6 @@
 package com.myinfocar.aicoachstock.ui.principle
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,23 +15,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,6 +44,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.myinfocar.aicoachstock.domain.model.TradingPrinciple
 import com.myinfocar.aicoachstock.domain.repository.TradingPrincipleRepository
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.EmptyState
+import com.myinfocar.aicoachstock.ui.common.ListLoadingSkeleton
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -91,26 +95,47 @@ fun PrincipleListScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(title = { Text("매매 원칙") })
+            TopAppBar(
+                title = { Text("매매 원칙", style = MaterialTheme.typography.titleLarge) },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
+            )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddClick) {
+            FloatingActionButton(
+                onClick = onAddClick,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                elevation = FloatingActionButtonDefaults.elevation(
+                    defaultElevation = 0.dp,
+                    pressedElevation = 0.dp,
+                    focusedElevation = 0.dp,
+                    hoveredElevation = 0.dp,
+                ),
+            ) {
                 Icon(Icons.Default.Add, contentDescription = "원칙 추가")
             }
         },
     ) { padding ->
         when {
-            state.isLoading -> {
-                Box(
-                    Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center,
-                ) { CircularProgressIndicator() }
-            }
-            state.items.isEmpty() -> EmptyState(modifier = Modifier.padding(padding))
+            state.isLoading -> ListLoadingSkeleton(modifier = Modifier.padding(padding))
+
+            state.items.isEmpty() -> EmptyState(
+                modifier = Modifier.padding(padding),
+                title = "아직 등록된 원칙이 없어요",
+                description = "+ 버튼으로 진입·청산·자금관리·심리 원칙을 추가해보세요.",
+                icon = "📏",
+            )
+
             else -> LazyColumn(
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(
+                    horizontal = AppTokens.space16,
+                    vertical = AppTokens.space12,
+                ),
+                verticalArrangement = Arrangement.spacedBy(AppTokens.space8),
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
                 items(state.items, key = { it.id }) { p ->
@@ -121,28 +146,12 @@ fun PrincipleListScreen(
                         onDelete = { viewModel.delete(p.id) },
                     )
                 }
+                item { Spacer(Modifier.height(AppTokens.space24)) }
             }
         }
     }
 }
 
-@Composable
-private fun EmptyState(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("아직 등록된 원칙이 없어요.", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "+ 버튼으로 진입·청산·자금관리·심리 원칙을 추가해보세요.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PrincipleCard(
     principle: TradingPrinciple,
@@ -150,46 +159,62 @@ private fun PrincipleCard(
     onToggleActive: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(onClick = onClick) {
-        Column(Modifier.padding(16.dp)) {
+    AppCard(onClick = onClick, padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AssistChip(
-                    onClick = {},
-                    label = { Text(principle.category.label()) },
-                    enabled = false,
-                )
-                Spacer(Modifier.width(8.dp))
+                CategoryBadge(label = principle.category.label())
+                Spacer(Modifier.width(AppTokens.space8))
                 Text(
                     "★".repeat(principle.weight),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.weight(1f))
                 Switch(checked = principle.isActive, onCheckedChange = { onToggleActive() })
             }
-            Spacer(Modifier.height(8.dp))
             Text(
                 principle.ruleText,
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
+                color = if (principle.isActive) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(AppTokens.space4))
                     Text("삭제")
                 }
                 TextButton(onClick = onClick) {
                     Icon(Icons.Default.Edit, null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(AppTokens.space4))
                     Text("편집")
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CategoryBadge(label: String) {
+    Box(
+        modifier = Modifier
+            .background(
+                MaterialTheme.colorScheme.primaryContainer,
+                RoundedCornerShape(AppTokens.radius8),
+            )
+            .padding(horizontal = AppTokens.space8, vertical = 2.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

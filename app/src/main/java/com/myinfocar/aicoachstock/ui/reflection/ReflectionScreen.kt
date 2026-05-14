@@ -16,9 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -29,6 +26,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.PrimaryButton
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -165,14 +166,18 @@ fun ReflectionScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("AI 매매 복기") },
+                title = { Text("AI 매매 복기", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
@@ -187,9 +192,9 @@ fun ReflectionScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(AppTokens.space16)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(AppTokens.space12),
         ) {
             TradeSummaryCard(trade = state.trade!!, stockName = state.stockName)
 
@@ -217,20 +222,15 @@ fun ReflectionScreen(
                 )
             }
 
-            Button(
+            PrimaryButton(
+                text = if (saved == null) "AI 복기 생성" else "재생성",
                 onClick = viewModel::generate,
                 enabled = !state.isGenerating,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (state.isGenerating) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                } else {
-                    Text(if (saved == null) "🤖 AI 복기 생성" else "재생성")
-                }
-            }
+                isLoading = state.isGenerating,
+            )
 
             state.errorMessage?.let { msg ->
-                Text("❌ $msg", color = MaterialTheme.colorScheme.error)
+                Text("❌ $msg", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
 
             DisclaimerCard()
@@ -249,27 +249,25 @@ private fun TradeSummaryCard(trade: Trade, stockName: String?) {
         Market.KR -> NumberFormat.getNumberInstance(Locale.KOREA)
         Market.US -> NumberFormat.getNumberInstance(Locale.US).apply { maximumFractionDigits = 2 }
     }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val sideText = if (trade.side == TradeSide.BUY) "매수" else "매도"
-                Text(
-                    "$sideText  ·  ${trade.ticker}${stockName?.let { " ($it)" } ?: ""}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
+    AppCard(padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
+            val sideText = if (trade.side == TradeSide.BUY) "매수" else "매도"
+            Text(
+                "$sideText  ·  ${trade.ticker}${stockName?.let { " ($it)" } ?: ""}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
             Text(
                 "${moneyFmt.format(trade.price)} × ${trade.qty}주  =  ${moneyFmt.format(trade.price * trade.qty)}",
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
-                "${dateFmt.format(trade.executedAt)}  ·  감정: ${trade.emotionTag.name}",
+                "${dateFmt.format(trade.executedAt)}  ·  감정 ${trade.emotionTag.name}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             trade.reasonText?.takeIf { it.isNotBlank() }?.let {
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(AppTokens.space4))
                 Text("이유: $it", style = MaterialTheme.typography.bodyMedium)
             }
         }
@@ -278,12 +276,12 @@ private fun TradeSummaryCard(trade: Trade, stockName: String?) {
 
 @Composable
 private fun AnalysisCard(text: String, generating: Boolean) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    AppCard(padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("AI 분석", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 if (generating) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 }
             }
             Text(text, style = MaterialTheme.typography.bodyMedium)
@@ -294,17 +292,17 @@ private fun AnalysisCard(text: String, generating: Boolean) {
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ViolationsCard(violations: List<String>, lookup: Map<String, TradingPrinciple>) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    AppCard(
+        containerColor = MaterialTheme.colorScheme.errorContainer,
+        padding = AppTokens.space16,
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
             Text(
                 "⚠ 위반된 원칙 ${violations.size}건",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
                 violations.forEach { id ->
                     val rule = lookup[id]?.ruleText ?: id
                     AssistChip(onClick = {}, label = { Text(rule) })
@@ -316,11 +314,11 @@ private fun ViolationsCard(violations: List<String>, lookup: Map<String, Trading
 
 @Composable
 private fun LessonCard(lesson: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    AppCard(
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        padding = AppTokens.space16,
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
             Text(
                 "💡 교훈",
                 style = MaterialTheme.typography.labelLarge,
@@ -343,8 +341,8 @@ private fun MyNoteCard(
     onSave: () -> Unit,
     pristine: Boolean,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    AppCard(padding = AppTokens.space16) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
             Text("내 메모", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 value = value,

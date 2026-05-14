@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -29,6 +31,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -37,6 +40,8 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,6 +51,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.myinfocar.aicoachstock.ui.common.AppCard
@@ -195,6 +201,8 @@ fun WatchListScreen(
     val ticks by viewModel.ticks.collectAsState()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var editingEntry by remember { mutableStateOf<WatchListEntry?>(null) }
+    var sheetEntry by remember { mutableStateOf<WatchListEntry?>(null) }
+    var deleteConfirmEntry by remember { mutableStateOf<WatchListEntry?>(null) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -244,8 +252,7 @@ fun WatchListScreen(
                             entry = entry,
                             tick = ticks[entry.item.ticker],
                             onClick = { onItemClick(entry.item.ticker) },
-                            onLongClick = { editingEntry = entry },
-                            onDelete = { viewModel.remove(entry.item.id) },
+                            onLongClick = { sheetEntry = entry },
                         )
                     }
                 }
@@ -272,6 +279,106 @@ fun WatchListScreen(
                 editingEntry = null
             },
         )
+    }
+
+    sheetEntry?.let { entry ->
+        ActionSheet(
+            title = entry.stock?.nameKo ?: entry.item.ticker,
+            onEdit = {
+                sheetEntry = null
+                editingEntry = entry
+            },
+            onDelete = {
+                sheetEntry = null
+                deleteConfirmEntry = entry
+            },
+            onDismiss = { sheetEntry = null },
+        )
+    }
+
+    deleteConfirmEntry?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { deleteConfirmEntry = null },
+            title = { Text("관심종목 삭제") },
+            text = { Text("${entry.stock?.nameKo ?: entry.item.ticker}를 관심종목에서 삭제할까요?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.remove(entry.item.id)
+                    deleteConfirmEntry = null
+                }) {
+                    Text("삭제", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteConfirmEntry = null }) { Text("취소") }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActionSheet(
+    title: String,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = AppTokens.space16, vertical = AppTokens.space8),
+            verticalArrangement = Arrangement.spacedBy(AppTokens.space4),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(
+                    horizontal = AppTokens.space8,
+                    vertical = AppTokens.space8,
+                ),
+            )
+            ActionRow(
+                icon = Icons.Default.Edit,
+                label = "메모 편집",
+                onClick = onEdit,
+            )
+            ActionRow(
+                icon = Icons.Default.Delete,
+                label = "관심종목에서 삭제",
+                tint = MaterialTheme.colorScheme.error,
+                onClick = onDelete,
+            )
+            Spacer(Modifier.height(AppTokens.space16))
+        }
+    }
+}
+
+@Composable
+private fun ActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(AppTokens.radius12))
+            .clickable(onClick = onClick)
+            .padding(horizontal = AppTokens.space12, vertical = AppTokens.space12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(AppTokens.space24))
+        Spacer(Modifier.width(AppTokens.space16))
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = tint)
     }
 }
 
@@ -318,7 +425,6 @@ private fun WatchListCard(
     tick: MarketTick?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onDelete: () -> Unit,
 ) {
     val market = entry.stock?.market ?: Market.KR
     AppCard(padding = 0.dp) {
@@ -332,16 +438,6 @@ private fun WatchListCard(
                 exchangeLabel = entry.stock?.exchange?.label(),
                 onClick = onClick,
                 onLongClick = onLongClick,
-                trailing = {
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = "삭제",
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
             )
             if (!entry.item.note.isNullOrBlank()) {
                 Text(
