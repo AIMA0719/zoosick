@@ -1,6 +1,9 @@
 package com.myinfocar.aicoachstock.ui.watchlist
 
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,17 +15,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -35,7 +36,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,6 +48,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.SkeletonShimmer
+import com.myinfocar.aicoachstock.ui.common.StockRow
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -94,34 +99,60 @@ class WatchListViewModel @Inject constructor(
     val ticks: StateFlow<Map<String, MarketTick>> = _ticks.asStateFlow()
 
     init {
+        // 신규 ticker가 들어오면 장 시간 무관 즉시 1회 fetch (REST는 비장시간에도 전일 종가 반환).
+        viewModelScope.launch {
+            var prev: Set<String> = emptySet()
+            uiState.collect { state ->
+                val curr = state.entries.map { it.item.ticker }.toSet()
+                val added = curr - prev
+                val removed = prev - curr
+                if (added.isNotEmpty()) {
+                    refreshTicks(state.entries.filter { it.item.ticker in added })
+                }
+                if (removed.isNotEmpty()) {
+                    _ticks.update { it.filterKeys { k -> k in curr } }
+                }
+                prev = curr
+            }
+        }
+        // 장 열림 시 30초 폴링으로 전체 갱신.
         viewModelScope.launch {
             while (true) {
+                delay(POLL_INTERVAL_MS)
                 val entries = uiState.value.entries
                 if (entries.isNotEmpty() && MarketHours.anyOpen()) {
-                    val activeTickers = entries.map { it.item.ticker }.toSet()
-                    val updates = mutableMapOf<String, MarketTick>()
-                    for (e in entries) {
-                        val market = e.stock?.market ?: Market.KR
-                        val tick = marketDataSource.fetchClosePrice(e.item.ticker, market).getOrNull()
-                        if (tick != null) updates[e.item.ticker] = tick
-                    }
-                    _ticks.update { current ->
-                        // 1) 더 이상 관심 목록에 없는 ticker 제거 (메모리 누수 방지)
-                        // 2) 값이 실제로 바뀐 ticker만 반영 (불필요한 recomposition 방지)
-                        val pruned = current.filterKeys { it in activeTickers }
-                        val merged = pruned.toMutableMap()
-                        var changed = pruned.size != current.size
-                        for ((t, v) in updates) {
-                            if (merged[t]?.price != v.price || merged[t]?.changePct != v.changePct) {
-                                merged[t] = v
-                                changed = true
-                            }
-                        }
-                        if (changed) merged else current
-                    }
+                    refreshTicks(entries)
                 }
-                delay(POLL_INTERVAL_MS)
             }
+        }
+    }
+
+    private suspend fun refreshTicks(entries: List<WatchListEntry>) {
+        val updates = mutableMapOf<String, MarketTick>()
+        for (e in entries) {
+            val market = e.stock?.market ?: Market.KR
+            val tick = marketDataSource.fetchClosePrice(e.item.ticker, market).getOrNull()
+            if (tick != null) updates[e.item.ticker] = tick
+        }
+        if (updates.isEmpty()) return
+        _ticks.update { current ->
+            val merged = current.toMutableMap()
+            var changed = false
+            for ((t, v) in updates) {
+                if (merged[t]?.price != v.price || merged[t]?.changePct != v.changePct) {
+                    merged[t] = v
+                    changed = true
+                }
+            }
+            if (changed) merged else current
+        }
+    }
+
+    /** 사용자가 당겨서 새로고침할 때 호출. */
+    fun refresh() {
+        viewModelScope.launch {
+            val entries = uiState.value.entries
+            if (entries.isNotEmpty()) refreshTicks(entries)
         }
     }
 
@@ -166,43 +197,57 @@ fun WatchListScreen(
     var editingEntry by remember { mutableStateOf<WatchListEntry?>(null) }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text("관심종목") },
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        "관심종목 ${if (state.entries.isNotEmpty()) state.entries.size else ""}".trim(),
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                },
                 actions = {
+                    IconButton(onClick = { viewModel.refresh() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "새로고침")
+                    }
                     IconButton(onClick = onSearchClick) {
                         Icon(Icons.Default.Search, contentDescription = "종목 검색")
                     }
+                    IconButton(onClick = { showAddDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "관심종목 추가")
+                    }
                 },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showAddDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "관심종목 추가")
-            }
         },
     ) { padding ->
         when {
-            state.isLoading -> Box(
-                Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) { CircularProgressIndicator() }
-
+            state.isLoading -> LoadingSkeleton(modifier = Modifier.padding(padding))
             state.entries.isEmpty() -> EmptyState(modifier = Modifier.padding(padding))
-
             else -> LazyColumn(
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(
+                    horizontal = AppTokens.space16,
+                    vertical = AppTokens.space12,
+                ),
+                verticalArrangement = Arrangement.spacedBy(AppTokens.space8),
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
                 items(state.entries, key = { it.item.id }) { entry ->
-                    WatchListCard(
-                        entry = entry,
-                        tick = ticks[entry.item.ticker],
-                        onClick = { onItemClick(entry.item.ticker) },
-                        onLongClick = { editingEntry = entry },
-                        onDelete = { viewModel.remove(entry.item.id) },
-                    )
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = fadeIn() + slideInVertically(initialOffsetY = { it / 6 }),
+                        exit = fadeOut(),
+                    ) {
+                        WatchListCard(
+                            entry = entry,
+                            tick = ticks[entry.item.ticker],
+                            onClick = { onItemClick(entry.item.ticker) },
+                            onLongClick = { editingEntry = entry },
+                            onDelete = { viewModel.remove(entry.item.id) },
+                        )
+                    }
                 }
             }
         }
@@ -233,20 +278,40 @@ fun WatchListScreen(
 @Composable
 private fun EmptyState(modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.fillMaxSize().padding(24.dp),
+        modifier = modifier.fillMaxSize().padding(AppTokens.space24),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("아직 관심종목이 없어요.", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
+        Text("관심 가는 종목을 모아두세요", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(AppTokens.space8))
         Text(
-            "+ 버튼으로 관심 가는 종목을 추가하세요. (한투 검색 연동은 다음 단계)",
+            "상단 + 버튼이나 🔍 검색으로 추가하면 현재가가 실시간으로 표시됩니다.",
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun LoadingSkeleton(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = AppTokens.space16, vertical = AppTokens.space12),
+        verticalArrangement = Arrangement.spacedBy(AppTokens.space8),
+    ) {
+        repeat(5) {
+            SkeletonShimmer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(76.dp),
+                cornerRadius = AppTokens.radius16,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WatchListCard(
     entry: WatchListEntry,
@@ -255,63 +320,41 @@ private fun WatchListCard(
     onLongClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    entry.item.ticker,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.width(8.dp))
-                entry.stock?.let { stock ->
-                    Text(
-                        stock.nameKo,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    AssistChip(
-                        onClick = {},
-                        label = { Text(stock.exchange.label()) },
-                        enabled = false,
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "삭제", modifier = Modifier.size(20.dp))
-                }
-            }
-            tick?.let {
-                Spacer(Modifier.height(6.dp))
-                val market = entry.stock?.market ?: Market.KR
-                val priceText = when (market) {
-                    Market.KR -> "%,d원".format(it.price.toLong())
-                    Market.US -> "$${"%.2f".format(it.price)}"
-                }
-                val pctColor = com.myinfocar.aicoachstock.ui.common.pnlColor(it.changePct)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        priceText,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = pctColor,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "${"%+.2f".format(it.changePct ?: 0.0)}%",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = pctColor,
-                    )
-                }
-            }
+    val market = entry.stock?.market ?: Market.KR
+    AppCard(padding = 0.dp) {
+        Column {
+            StockRow(
+                name = entry.stock?.nameKo ?: entry.item.ticker,
+                ticker = entry.item.ticker,
+                market = market,
+                price = tick?.price,
+                changePct = tick?.changePct,
+                exchangeLabel = entry.stock?.exchange?.label(),
+                onClick = onClick,
+                onLongClick = onLongClick,
+                trailing = {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "삭제",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+            )
             if (!entry.item.note.isNullOrBlank()) {
-                Spacer(Modifier.height(8.dp))
                 Text(
                     entry.item.note,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = AppTokens.space16,
+                            end = AppTokens.space16,
+                            bottom = AppTokens.space12,
+                        ),
                 )
             }
         }

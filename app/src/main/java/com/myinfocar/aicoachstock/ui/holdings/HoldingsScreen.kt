@@ -10,15 +10,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -30,13 +26,13 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -46,6 +42,9 @@ import com.myinfocar.aicoachstock.domain.account.AccountService
 import com.myinfocar.aicoachstock.domain.account.AccountSummary
 import com.myinfocar.aicoachstock.domain.account.Holding
 import com.myinfocar.aicoachstock.domain.model.Market
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.pnlColor
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -108,9 +107,10 @@ fun HoldingsScreen(
     LaunchedEffect(Unit) { if (state.holdings.isEmpty() && state.errorMessage == null) viewModel.refresh() }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("보유 종목") },
+                title = { Text("보유 종목", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
@@ -121,94 +121,117 @@ fun HoldingsScreen(
                         Icon(Icons.Default.Refresh, contentDescription = "새로고침")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            SingleChoiceSegmentedButtonRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            ) {
-                Market.entries.forEachIndexed { i, m ->
-                    SegmentedButton(
-                        selected = state.market == m,
-                        onClick = { viewModel.setMarket(m) },
-                        shape = SegmentedButtonDefaults.itemShape(i, Market.entries.size),
-                    ) { Text(if (m == Market.KR) "국내" else "해외") }
-                }
-            }
-
-            state.summary?.let { SummaryCard(it) }
-
-            state.errorMessage?.let { msg ->
-                Text(
-                    "❌ $msg",
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(16.dp),
-                )
-            }
-
-            when {
-                state.isLoading -> Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) { CircularProgressIndicator() }
-
-                state.holdings.isEmpty() && state.errorMessage == null -> Box(
-                    modifier = Modifier.fillMaxSize().padding(24.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "보유 종목이 없습니다.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(state.holdings, key = { "${it.market}-${it.ticker}" }) { h ->
-                        HoldingCard(h)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(
+                horizontal = AppTokens.space16,
+                vertical = AppTokens.space12,
+            ),
+            verticalArrangement = Arrangement.spacedBy(AppTokens.space8),
+        ) {
+            item {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    Market.entries.forEachIndexed { i, m ->
+                        SegmentedButton(
+                            selected = state.market == m,
+                            onClick = { viewModel.setMarket(m) },
+                            shape = SegmentedButtonDefaults.itemShape(i, Market.entries.size),
+                        ) { Text(if (m == Market.KR) "국내" else "해외") }
                     }
                 }
             }
+            state.summary?.let { item { SummaryCard(it) } }
+
+            when {
+                state.isLoading -> item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = AppTokens.space24),
+                        contentAlignment = Alignment.Center,
+                    ) { CircularProgressIndicator() }
+                }
+
+                state.errorMessage != null -> item {
+                    AppCard(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
+                        Text(
+                            "❌ ${state.errorMessage}",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+
+                state.holdings.isEmpty() -> item {
+                    AppCard {
+                        Text(
+                            "보유 종목이 없습니다.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+
+                else -> items(state.holdings, key = { "${it.market}-${it.ticker}" }) { h ->
+                    HoldingCard(h)
+                }
+            }
+            item { Spacer(Modifier.height(AppTokens.space16)) }
         }
     }
 }
 
 @Composable
 private fun SummaryCard(s: AccountSummary) {
-    val pnlColor = com.myinfocar.aicoachstock.ui.common.pnlColor(s.unrealizedPnl)
-    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    val color = pnlColor(s.unrealizedPnl)
+    AppCard(padding = AppTokens.space20) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
             Text(
                 "총 평가금액",
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 formatMoney(s.totalEvaluation, s.currencyCode),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.displaySmall,
             )
-            Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column {
-                    Text("매입금액", style = MaterialTheme.typography.labelSmall)
-                    Text(formatMoney(s.totalBuyAmount, s.currencyCode))
-                }
-                Column {
-                    Text("평가손익", style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(AppTokens.space4))
+            Row(horizontalArrangement = Arrangement.spacedBy(AppTokens.space16)) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "${formatMoney(s.unrealizedPnl, s.currencyCode)} (${"%+.2f".format(s.unrealizedPnlRate)}%)",
-                        color = pnlColor,
+                        "매입금액",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        formatMoney(s.totalBuyAmount, s.currencyCode),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "평가손익",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "${formatMoney(s.unrealizedPnl, s.currencyCode)}  ${"%+.2f".format(s.unrealizedPnlRate)}%",
+                        color = color,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
             s.cashDeposit?.let {
-                Text("예수금: ${formatMoney(it, s.currencyCode)}", style = MaterialTheme.typography.labelSmall)
+                Text(
+                    "예수금 ${formatMoney(it, s.currencyCode)}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -216,37 +239,33 @@ private fun SummaryCard(s: AccountSummary) {
 
 @Composable
 private fun HoldingCard(h: Holding) {
-    val pnlColor = com.myinfocar.aicoachstock.ui.common.pnlColor(h.unrealizedPnl)
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    val color = pnlColor(h.unrealizedPnl)
+    AppCard(padding = AppTokens.space16) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    h.ticker,
+                    h.name.ifBlank { h.ticker },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "${h.ticker}  ·  ${h.qty}주  ·  평단 ${formatPrice(h.avgBuyPrice, h.currencyCode)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    formatMoney(h.evaluationAmount, h.currencyCode),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
-                Spacer(Modifier.size(8.dp))
-                Text(h.name, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.size(4.dp))
-                h.exchangeCode?.let {
-                    AssistChip(onClick = {}, label = { Text(it) }, enabled = false)
-                }
-            }
-            Text(
-                "${h.qty}주  ·  평단 ${formatPrice(h.avgBuyPrice, h.currencyCode)}  ·  현재 ${formatPrice(h.currentPrice, h.currencyCode)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Spacer(Modifier.height(2.dp))
                 Text(
-                    "평가 ${formatMoney(h.evaluationAmount, h.currencyCode)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Text(
-                    "${formatMoney(h.unrealizedPnl, h.currencyCode)} (${"%+.2f".format(h.unrealizedPnlRate)}%)",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = pnlColor,
-                    fontWeight = FontWeight.SemiBold,
+                    "${formatMoney(h.unrealizedPnl, h.currencyCode)}  ${"%+.2f".format(h.unrealizedPnlRate)}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = color,
                 )
             }
         }

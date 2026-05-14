@@ -1,5 +1,9 @@
 package com.myinfocar.aicoachstock.ui.navigation
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -110,6 +114,32 @@ fun AppNavGraph(
         navController = navController,
         startDestination = startDestination,
         modifier = modifier,
+        enterTransition = {
+            slideIntoContainer(
+                AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(durationMillis = 260),
+            ) + fadeIn(animationSpec = tween(220))
+        },
+        exitTransition = {
+            slideOutOfContainer(
+                AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(durationMillis = 260),
+                targetOffset = { it / 6 },
+            ) + fadeOut(animationSpec = tween(180))
+        },
+        popEnterTransition = {
+            slideIntoContainer(
+                AnimatedContentTransitionScope.SlideDirection.End,
+                animationSpec = tween(durationMillis = 260),
+                initialOffset = { it / 6 },
+            ) + fadeIn(animationSpec = tween(220))
+        },
+        popExitTransition = {
+            slideOutOfContainer(
+                AnimatedContentTransitionScope.SlideDirection.End,
+                animationSpec = tween(durationMillis = 260),
+            ) + fadeOut(animationSpec = tween(180))
+        },
     ) {
         composable(AppRoutes.HOME) {
             HomeScreen(

@@ -17,7 +17,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,6 +28,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.PrimaryButton
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -184,11 +187,15 @@ fun StockDetailScreen(
     val state by viewModel.ui.collectAsState()
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text(state.nameKo ?: state.ticker)
+                        Text(
+                            state.nameKo ?: state.ticker,
+                            style = MaterialTheme.typography.titleLarge,
+                        )
                         Text(
                             "${state.ticker}  ·  ${state.market.name}",
                             style = MaterialTheme.typography.labelSmall,
@@ -206,6 +213,9 @@ fun StockDetailScreen(
                         Icon(Icons.Default.Refresh, contentDescription = "새로고침")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
@@ -220,8 +230,8 @@ fun StockDetailScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(AppTokens.space16),
+            verticalArrangement = Arrangement.spacedBy(AppTokens.space12),
         ) {
             PriceHeader(state)
             if (state.chart.isNotEmpty()) ChartCard(state.chart)
@@ -248,18 +258,21 @@ fun StockDetailScreen(
 private fun PriceHeader(state: StockDetailUiState) {
     val tick = state.tick
     val priceColor = com.myinfocar.aicoachstock.ui.common.pnlColor(tick?.changePct)
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    AppCard(padding = AppTokens.space20) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(state.nameKo ?: state.ticker, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.size(8.dp))
+                Text(
+                    state.nameKo ?: state.ticker,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.size(AppTokens.space8))
                 state.sector?.let { AssistChip(onClick = {}, label = { Text(it) }, enabled = false) }
             }
             Text(
                 tick?.let { formatPrice(it.price, state.market) } ?: "—",
-                style = MaterialTheme.typography.displaySmall,
+                style = MaterialTheme.typography.displayMedium,
                 color = priceColor,
-                fontWeight = FontWeight.Bold,
             )
             tick?.let {
                 val sign = if ((it.change ?: 0.0) > 0) "+" else if ((it.change ?: 0.0) < 0) "" else ""
@@ -270,7 +283,7 @@ private fun PriceHeader(state: StockDetailUiState) {
                 )
                 Text(
                     "거래량 ${it.volumeCum ?: "-"}",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -399,38 +412,40 @@ private fun NewsCard(news: List<OverseasNewsItem>) {
 
 @Composable
 private fun AdvisorSection(state: StockDetailUiState, onRun: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    AppCard(
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        padding = AppTokens.space20,
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space12)) {
             Text(
-                "🤖 AI 코칭 — 지금 어떻게?",
-                style = MaterialTheme.typography.titleMedium,
+                "AI 코칭 — 지금 어떻게?",
+                style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
-                fontWeight = FontWeight.Bold,
             )
             Text(
-                "현재가·차트·재무·외국인/기관·내 보유·활성 원칙을 종합해서 BUY/HOLD/SELL 의견 + 근거를 제시합니다.",
+                "현재가·차트·재무·외국인/기관·내 보유·활성 원칙을 종합해서 BUY/HOLD/SELL 의견과 근거를 제시합니다.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
-            Button(onClick = onRun, enabled = !state.advisorIsGenerating, modifier = Modifier.fillMaxWidth()) {
-                if (state.advisorIsGenerating) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                } else {
-                    Text("AI 분석 받기")
-                }
-            }
+            PrimaryButton(
+                text = "AI 분석 받기",
+                onClick = onRun,
+                enabled = !state.advisorIsGenerating,
+                isLoading = state.advisorIsGenerating,
+            )
             state.advisorPhaseMessage?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
             }
             if (state.advisorStreaming.isNotEmpty()) {
-                Text(state.advisorStreaming, style = MaterialTheme.typography.bodyMedium)
+                AppCard(containerColor = MaterialTheme.colorScheme.surface) {
+                    Text(state.advisorStreaming, style = MaterialTheme.typography.bodyMedium)
+                }
             }
-            state.advisorResult?.let { res ->
-                AdvisorResultCard(res)
-            }
+            state.advisorResult?.let { res -> AdvisorResultCard(res) }
             state.advisorError?.let { err ->
                 Text(
                     "❌ $err",
@@ -446,22 +461,33 @@ private fun AdvisorSection(state: StockDetailUiState, onRun: () -> Unit) {
 private fun AdvisorResultCard(res: TradingAdvisorService.Parsed) {
     val (label, color) = when (res.recommendation) {
         TradingAdvisorService.Recommendation.BUY -> "BUY" to com.myinfocar.aicoachstock.ui.common.KrUpRed
-        TradingAdvisorService.Recommendation.HOLD -> "HOLD" to Color(0xFFF9A825)
+        TradingAdvisorService.Recommendation.HOLD -> "HOLD" to Color(0xFFF59E0B)
         TradingAdvisorService.Recommendation.SELL -> "SELL" to com.myinfocar.aicoachstock.ui.common.KrDownBlue
     }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.12f)),
+    AppCard(
+        containerColor = color.copy(alpha = 0.10f),
+        padding = AppTokens.space20,
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(label, style = MaterialTheme.typography.headlineMedium, color = color, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.size(12.dp))
+                Text(
+                    label,
+                    style = MaterialTheme.typography.displaySmall,
+                    color = color,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.size(AppTokens.space12))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("확신도 ${res.confidence}%", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "확신도 ${res.confidence}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.size(AppTokens.space4))
                     LinearProgressIndicator(
                         progress = { res.confidence / 100f },
                         color = color,
+                        trackColor = color.copy(alpha = 0.18f),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
