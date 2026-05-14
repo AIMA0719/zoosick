@@ -1,9 +1,12 @@
 package com.myinfocar.aicoachstock.ui.home
 
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,10 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -27,14 +27,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -52,6 +51,12 @@ import com.myinfocar.aicoachstock.domain.repository.WatchListEntry
 import com.myinfocar.aicoachstock.domain.repository.WatchListRepository
 import com.myinfocar.aicoachstock.domain.stockinfo.StockInfoService
 import com.myinfocar.aicoachstock.data.remote.kis.dto.DividendItem
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.PrimaryButton
+import com.myinfocar.aicoachstock.ui.common.StockRow
+import com.myinfocar.aicoachstock.ui.common.pnlColor
+import com.myinfocar.aicoachstock.ui.watchlist.label
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -116,7 +121,6 @@ class HomeViewModel @Inject constructor(
             } else emptyList()
             _ui.update { it.copy(upcomingDividends = dividends) }
 
-            // 관심 가격은 WatchListViewModel이 30초마다 폴링하므로 여기선 미니뷰용 상위 5개만 한 번 채움.
             val ticks = mutableMapOf<String, MarketTick>()
             for (e in entries.take(5)) {
                 val market = e.stock?.market ?: Market.KR
@@ -170,35 +174,58 @@ fun HomeScreen(
     val state by viewModel.ui.collectAsState()
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text("AICoachStock") },
+            CenterAlignedTopAppBar(
+                title = {
+                    Text("AICoachStock", style = MaterialTheme.typography.titleLarge)
+                },
                 actions = {
                     IconButton(onClick = viewModel::refresh, enabled = !state.isLoading) {
                         Icon(Icons.Default.Refresh, contentDescription = "새로고침")
                     }
                 },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(
+                horizontal = AppTokens.space16,
+                vertical = AppTokens.space12,
+            ),
+            verticalArrangement = Arrangement.spacedBy(AppTokens.space12),
         ) {
             item { BriefingCard(state, onGenerate = viewModel::generateBriefing) }
             item { AssetSummaryCard(state.krSummary, onOpenHoldings) }
             if (state.upcomingDividends.isNotEmpty()) {
                 item { DividendCard(state.upcomingDividends) }
             }
-            item { Text("📊 내 보유", style = MaterialTheme.typography.titleMedium) }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = AppTokens.space8),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "내 보유",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onOpenHoldings) { Text("전체") }
+                }
+            }
             if (state.krHoldings.isEmpty()) {
                 item {
-                    Text(
-                        "보유 종목 없음",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
+                    AppCard {
+                        Text(
+                            "보유 종목 없음 — 한투 키를 설정하면 표시됩니다.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             } else {
                 items(state.krHoldings.take(5), key = { it.ticker }) { h ->
@@ -206,22 +233,31 @@ fun HomeScreen(
                 }
             }
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("👀 관심 종목", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    androidx.compose.material3.TextButton(onClick = onOpenWatchlist) { Text("전체") }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = AppTokens.space8),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "관심 종목",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onOpenWatchlist) { Text("전체") }
                 }
             }
             if (state.watchEntries.isEmpty()) {
                 item {
-                    Text(
-                        "관심 종목 없음 — 관심 탭에서 추가하세요.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
+                    AppCard {
+                        Text(
+                            "관심 종목 없음 — 관심 탭에서 추가하세요.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             } else {
                 items(state.watchEntries.take(5), key = { it.item.id }) { entry ->
-                    WatchMiniCard(
+                    WatchMiniRow(
                         entry = entry,
                         tick = state.watchTicks[entry.item.ticker],
                         onClick = { onOpenStock(entry.item.ticker) },
@@ -230,43 +266,64 @@ fun HomeScreen(
             }
             state.errorMessage?.let {
                 item {
-                    Text("⚠ $it", color = MaterialTheme.colorScheme.error)
+                    AppCard(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
+                        Text("⚠ $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
+            item { Spacer(Modifier.height(AppTokens.space16)) }
         }
     }
 }
 
 @Composable
 private fun BriefingCard(state: HomeUiState, onGenerate: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    AppCard(
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        padding = AppTokens.space20,
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space12)) {
             Text(
-                "🌅 오늘 AI 코칭 브리핑",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
+                "오늘 AI 코칭 브리핑",
+                style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
             Text(
-                "한투 실데이터 (외국인·기관·예수금·내 보유·관심) + 활성 원칙을 종합한 오늘의 한 줄.",
+                "외국인·기관·예수금·내 보유·관심 + 활성 원칙을 종합한 오늘의 한 줄.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
-            Button(onClick = onGenerate, enabled = !state.isGenerating, modifier = Modifier.fillMaxWidth()) {
-                if (state.isGenerating) CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                else Text(if (state.briefingResult == null) "브리핑 생성" else "다시 생성")
+            PrimaryButton(
+                text = if (state.briefingResult == null) "브리핑 생성" else "다시 생성",
+                onClick = onGenerate,
+                isLoading = state.isGenerating,
+                enabled = !state.isGenerating,
+            )
+            state.briefingPhase?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
             }
-            state.briefingPhase?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             val display = state.briefingResult ?: state.briefingStreaming.takeIf { it.isNotBlank() }
-            display?.let {
-                Card {
-                    Text(it, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+            AnimatedVisibility(
+                visible = display != null,
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                display?.let {
+                    AppCard(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        padding = AppTokens.space16,
+                    ) {
+                        Text(it, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
-            state.briefingError?.let { Text("❌ $it", color = MaterialTheme.colorScheme.error) }
+            state.briefingError?.let {
+                Text("❌ $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -274,10 +331,17 @@ private fun BriefingCard(state: HomeUiState, onGenerate: () -> Unit) {
 @Composable
 private fun AssetSummaryCard(summary: AccountSummary?, onClick: () -> Unit) {
     val s = summary
-    val pnlColor = com.myinfocar.aicoachstock.ui.common.pnlColor(s?.unrealizedPnl)
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("💼 내 자산 (한투 계좌)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val color = pnlColor(s?.unrealizedPnl)
+    AppCard(
+        onClick = onClick,
+        padding = AppTokens.space20,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
+            Text(
+                "내 자산",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (s == null) {
                 Text(
                     "한투 키 / 계좌번호를 설정하면 표시됩니다.",
@@ -287,16 +351,19 @@ private fun AssetSummaryCard(summary: AccountSummary?, onClick: () -> Unit) {
             } else {
                 Text(
                     "%,d원".format(s.totalEvaluation.toLong()),
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.displayMedium,
                 )
                 Text(
                     "%+,d원  (%+.2f%%)".format(s.unrealizedPnl.toLong(), s.unrealizedPnlRate),
                     style = MaterialTheme.typography.titleMedium,
-                    color = pnlColor,
+                    color = color,
                 )
                 s.cashDeposit?.let {
-                    Text("예수금 ${"%,d".format(it.toLong())}원", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "예수금 ${"%,d".format(it.toLong())}원",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -305,14 +372,27 @@ private fun AssetSummaryCard(summary: AccountSummary?, onClick: () -> Unit) {
 
 @Composable
 private fun DividendCard(items: List<DividendItem>) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("💰 다가오는 배당 (보유 종목)", style = MaterialTheme.typography.titleMedium)
+    AppCard {
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
+            Text("다가오는 배당", style = MaterialTheme.typography.titleMedium)
             items.forEach { d ->
-                Row {
-                    Text(d.recordDate.orEmpty(), modifier = Modifier.width(80.dp), style = MaterialTheme.typography.bodySmall)
-                    Text(d.isinName.orEmpty(), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                    Text("${d.perStoDiviAmt ?: "-"}원", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        d.recordDate.orEmpty(),
+                        modifier = Modifier.width(72.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        d.isinName.orEmpty(),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "${d.perStoDiviAmt ?: "-"}원",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
         }
@@ -321,42 +401,51 @@ private fun DividendCard(items: List<DividendItem>) {
 
 @Composable
 private fun HoldingMiniCard(h: Holding, onClick: () -> Unit) {
-    val pnlColor = com.myinfocar.aicoachstock.ui.common.pnlColor(h.unrealizedPnl)
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+    val color = pnlColor(h.unrealizedPnl)
+    AppCard(onClick = onClick, padding = AppTokens.space16) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(h.name.ifBlank { h.ticker }, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                Text("${h.qty}주 / 평단 ${h.avgBuyPrice.toLong()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    h.name.ifBlank { h.ticker },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "${h.qty}주 · 평단 ${"%,d".format(h.avgBuyPrice.toLong())}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("%,d원".format(h.evaluationAmount.toLong()), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text("%+.2f%%".format(h.unrealizedPnlRate), color = pnlColor, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "%,d원".format(h.evaluationAmount.toLong()),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "%+.2f%%".format(h.unrealizedPnlRate),
+                    color = color,
+                    style = MaterialTheme.typography.labelMedium,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun WatchMiniCard(entry: WatchListEntry, tick: MarketTick?, onClick: () -> Unit) {
+private fun WatchMiniRow(entry: WatchListEntry, tick: MarketTick?, onClick: () -> Unit) {
     val market = entry.stock?.market ?: Market.KR
-    val pctColor = com.myinfocar.aicoachstock.ui.common.pnlColor(tick?.changePct)
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(entry.stock?.nameKo ?: entry.item.ticker, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                Text(entry.item.ticker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                tick?.let {
-                    val priceText = when (market) {
-                        Market.KR -> "%,d원".format(it.price.toLong())
-                        Market.US -> "$${"%.2f".format(it.price)}"
-                    }
-                    Text(priceText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = pctColor)
-                    Text("%+.2f%%".format(it.changePct ?: 0.0), color = pctColor, style = MaterialTheme.typography.bodyMedium)
-                } ?: Text("—", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
+    AppCard(padding = 0.dp) {
+        StockRow(
+            name = entry.stock?.nameKo ?: entry.item.ticker,
+            ticker = entry.item.ticker,
+            market = market,
+            price = tick?.price,
+            changePct = tick?.changePct,
+            exchangeLabel = entry.stock?.exchange?.label(),
+            onClick = onClick,
+        )
     }
 }
-

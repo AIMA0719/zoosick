@@ -2,7 +2,7 @@
 
 > **다음 작업 시 이 파일 먼저 읽고 시작.** PRD는 `docs/AICoachStock-PRD/` 안에 5개.
 
-마지막 업데이트: 2026-05-13
+마지막 업데이트: 2026-05-14 (UI Stage A+B 토스 톤 개편)
 
 ---
 
@@ -284,6 +284,50 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase
 - BottomTab에 **SETTINGS** 추가 (5개: 원칙/매매/관심/코치/설정)
 - 기존 Principle/Trade/WatchList/Coach 화면의 우상단 ⚙️ 아이콘 모두 제거
 - SettingsScreen은 BottomTab 진입 시 navigationIcon(뒤로) 숨김 (`onBack: () -> Unit?` nullable)
+
+### UI Stage A+B: 토스 증권 톤 개편 ✨ NEW (worktree: `ui-toss-overhaul`)
+사용자 요청: "토스 증권 앱처럼 일괄 개편" + "클릭 이펙트/화면 전환 애니메이션" + "관심 종목 카드에 현재가 표시 + 클릭 시 상세".
+
+**Foundation (Stage A)**:
+- `Color.kt` 전면 재정의 — **토스 블루 `#3182F6`** 강조색 + 거의 흑백 neutral 팔레트 (Background `#F7F8FA`, Surface `#FFFFFF`, TextPrimary `#191F28`, TextSecondary `#6B7684`, Outline `#E5E8EB`)
+- `Theme.kt` — **`dynamicColor` 제거** (라이트 고정, 브랜드 일관성). 상태바 색 자동 매칭.
+- `Type.kt` — display(40/32/28sp Bold) / headline / title / body / label 11종 위계 전면 정의 (시스템 폰트 + FontWeight)
+- 새 파일: `Shape.kt` (corner radius 6~24dp) / `Tokens.kt` (`AppTokens` — space/radius/높이 토큰)
+- 기존 Primary/PrimaryDark/ErrorRed 심볼은 alias로 유지 (하위 호환)
+
+**Components (Stage B)** — `ui/common/` 추가:
+- `AppCard` — flat (elevation 0), 16dp 라운드, 클릭 시 ripple + **scale 0.98 애니메이션**
+- `PrimaryButton` / `SecondaryButton` — 56dp 풀폭, 14dp 라운드, Bold
+- `StockRow` — 표준 종목 행 (좌: 이름·코드, 우: 가격·등락 컬러). **price null이면 shimmer skeleton**
+- `SkeletonShimmer` — 회색 박스 + 좌→우 shimmer 애니메이션 (1.1s)
+- `SectionHeader` — 타이틀+서브타이틀+트레일링 슬롯
+- `DisclaimerBox` — 작은 회색 디스클레이머 박스
+
+**관심 종목 카드 현재가 미표시 버그 fix**:
+- `WatchListViewModel.init` 분리: ① 신규 ticker 들어오면 **즉시 1회 fetch** (장 시간 무관), ② 장 열림 시 30초 폴링
+- 기존 `MarketHours.anyOpen()` 가드가 비장시간에 fetch를 막아서 카드 가격이 영영 안 채워지던 문제 해결
+- `refresh()` public 메서드 추가 — TopBar 새로고침 아이콘과 연결
+- WatchListCard 새 디자인: `AppCard` + `StockRow` (가격 자리에 항상 표시 — 로딩 중엔 shimmer)
+- TopAppBar에서 FAB 제거 → 상단 actions에 🔄/🔍/+ 통합 (토스 스타일)
+
+**클릭/네비게이션 애니메이션**:
+- `AppNavGraph` NavHost-level 디폴트 transition — 새 화면: **slideStart + fade 260ms**, 뒤로가기: **slideEnd + fade 260ms**
+- `AppCard` 클릭 시 ripple + scale 0.98 → 1.0 (`animateFloatAsState`, 120ms)
+- 관심 카드 enter: fadeIn + slideInVertically (offsetY / 6)
+
+**NavigationBar 토스 톤**:
+- containerColor = surface (흰)
+- 선택 시 indicator = primaryContainer (`#E8F1FE`), 아이콘·라벨 = primary
+- 비선택 = onSurfaceVariant
+- tonalElevation 0
+
+✅ `./gradlew.bat assembleDebug` BUILD SUCCESSFUL (worktree)
+
+**다음 후속(미진행)**:
+- HomeScreen / HoldingsScreen / StockDetailScreen 카드 → `AppCard` 마이그레이션 (도메인 로직 영향 X, 시각 개선만)
+- 폼(Trade/Principle 편집·Dialog) OutlinedTextField → 토스 인풋 스타일
+- Pretendard 폰트 자산 추가 (`res/font/`)
+- BottomNav 6→4탭 슬림화 (원칙/설정 → "메뉴" 탭으로 통합)
 
 ---
 
