@@ -27,12 +27,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import com.myinfocar.aicoachstock.ui.common.SettingsTile
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -187,9 +187,10 @@ fun SettingsScreen(
     val state by viewModel.ui.collectAsState()
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("설정") },
+                title = { Text("설정", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     if (onBack != null) {
                         IconButton(onClick = onBack) {
@@ -197,6 +198,9 @@ fun SettingsScreen(
                         }
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
@@ -211,9 +215,9 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(horizontal = AppTokens.space16, vertical = AppTokens.space12)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(AppTokens.space12),
         ) {
             ApiKeySection(
                 creds = state.creds,
@@ -227,43 +231,55 @@ fun SettingsScreen(
                 onSaveAccount = viewModel::saveAccount,
                 onSyncNow = viewModel::syncNow,
             )
+
             HorizontalDivider()
-            Text("AI 모델", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Gemma 4 E4B 다운로드 / 로드 / 추론 PoC. 본 개발 전 검증용.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(
-                onClick = onOpenLlmPoc,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("AI 모델 PoC 열기") }
-            OutlinedButton(
-                onClick = onOpenKisWsPoc,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("한투 WS PoC 열기") }
-            HorizontalDivider()
-            Text("도구", style = MaterialTheme.typography.titleMedium)
-            OutlinedButton(
+            SectionLabel("도구")
+            SettingsTile(
+                title = "진입 체크리스트",
+                description = "매수 전 원칙 체크",
+                leadingEmoji = "🚦",
                 onClick = onOpenEntryChecklist,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("🚦 진입 체크리스트") }
-            OutlinedButton(
+            )
+            SettingsTile(
+                title = "가격 알림",
+                description = "손절/익절 트리거 관리",
+                leadingEmoji = "🔔",
                 onClick = onOpenPriceAlerts,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("🔔 가격 알림 (손절/익절)") }
-            OutlinedButton(
+            )
+            SettingsTile(
+                title = "종목 검색",
+                description = "한투 REST 단일 조회",
+                leadingEmoji = "🔎",
                 onClick = onOpenStockSearch,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("🔎 종목 검색") }
-            OutlinedButton(
+            )
+            SettingsTile(
+                title = "종목 리서치 Q&A",
+                description = "Gemma 4 기반 질의응답",
+                leadingEmoji = "📑",
                 onClick = onOpenResearch,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("📑 종목 리서치 Q&A") }
-            OutlinedButton(
+            )
+            SettingsTile(
+                title = "보유 종목",
+                description = "한투 계좌 잔고",
+                leadingEmoji = "📊",
                 onClick = onOpenHoldings,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("📊 보유 종목 (한투 계좌)") }
+            )
+
+            HorizontalDivider()
+            SectionLabel("개발자 도구")
+            SettingsTile(
+                title = "AI 모델 PoC",
+                description = "Gemma 4 E4B 다운로드/추론 검증",
+                leadingEmoji = "🤖",
+                onClick = onOpenLlmPoc,
+            )
+            SettingsTile(
+                title = "한투 WebSocket PoC",
+                description = "실시간 시세 스트림 검증",
+                leadingEmoji = "🔌",
+                onClick = onOpenKisWsPoc,
+            )
+
             HorizontalDivider()
             TokenSection(
                 creds = state.creds,
@@ -284,6 +300,15 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(top = AppTokens.space8, bottom = AppTokens.space4),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -332,7 +357,7 @@ private fun ApiKeySection(
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(AppTokens.space8),
     ) {
         Button(
             onClick = { onSave(appKey, appSecret, env) },
@@ -390,7 +415,7 @@ private fun AccountSection(
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(AppTokens.space8),
     ) {
         OutlinedTextField(
             value = accountNo,
@@ -410,7 +435,7 @@ private fun AccountSection(
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(AppTokens.space8),
     ) {
         Button(
             onClick = { onSaveAccount(accountNo, productCode) },

@@ -1,22 +1,24 @@
 package com.myinfocar.aicoachstock.ui.coach
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,6 +44,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.myinfocar.aicoachstock.domain.model.CoachSession
 import com.myinfocar.aicoachstock.domain.repository.CoachRepository
+import com.myinfocar.aicoachstock.ui.common.AppCard
+import com.myinfocar.aicoachstock.ui.common.EmptyState
+import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -88,37 +94,46 @@ fun CoachListScreen(
     var deleteTarget by remember { mutableStateOf<CoachSession?>(null) }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(title = { Text("AI 코치 채팅") })
+            TopAppBar(
+                title = { Text("AI 코치 채팅", style = MaterialTheme.typography.titleLarge) },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
+            )
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { showCreate = true },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 text = { Text("새 대화") },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                elevation = FloatingActionButtonDefaults.elevation(
+                    defaultElevation = 0.dp,
+                    pressedElevation = 0.dp,
+                    focusedElevation = 0.dp,
+                    hoveredElevation = 0.dp,
+                ),
             )
         },
     ) { padding ->
         if (sessions.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("아직 대화가 없습니다", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "오른쪽 아래 '새 대화'로 시작하세요. 활성 원칙과 최근 매매가 자동으로 컨텍스트로 들어갑니다.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            EmptyState(
+                modifier = Modifier.padding(padding),
+                title = "아직 대화가 없어요",
+                description = "오른쪽 아래 '새 대화'로 시작하세요. 활성 원칙과 최근 매매가 자동으로 컨텍스트로 들어갑니다.",
+                icon = "💬",
+            )
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(
+                    horizontal = AppTokens.space16,
+                    vertical = AppTokens.space12,
+                ),
+                verticalArrangement = Arrangement.spacedBy(AppTokens.space8),
             ) {
                 items(sessions, key = { it.id }) { session ->
                     SessionCard(
@@ -127,6 +142,7 @@ fun CoachListScreen(
                         onDelete = { deleteTarget = session },
                     )
                 }
+                item { Spacer(Modifier.height(AppTokens.space24)) }
             }
         }
     }
@@ -138,7 +154,7 @@ fun CoachListScreen(
             onDismissRequest = { showCreate = false },
             title = { Text("새 대화") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space12)) {
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
@@ -177,7 +193,7 @@ fun CoachListScreen(
                 TextButton(onClick = {
                     viewModel.delete(target.id)
                     deleteTarget = null
-                }) { Text("삭제") }
+                }) { Text("삭제", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) { Text("취소") }
@@ -193,9 +209,9 @@ private fun SessionCard(
     onDelete: () -> Unit,
 ) {
     val fmt = DateTimeFormatter.ofPattern("MM/dd HH:mm").withZone(ZoneId.systemDefault())
-    Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
-        androidx.compose.foundation.layout.Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+    AppCard(onClick = onClick, padding = AppTokens.space16) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -204,7 +220,7 @@ private fun SessionCard(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(AppTokens.space2))
                 val sub = buildString {
                     session.topicTicker?.let { append("종목 $it  ·  ") }
                     append(fmt.format(session.lastMessageAt))
@@ -216,7 +232,12 @@ private fun SessionCard(
                 )
             }
             IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "삭제")
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "삭제",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
