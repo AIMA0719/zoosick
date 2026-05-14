@@ -2,7 +2,7 @@
 
 > **다음 작업 시 이 파일 먼저 읽고 시작.** PRD는 `docs/AICoachStock-PRD/` 안에 5개.
 
-마지막 업데이트: 2026-05-14 (UI Stage C: 스크린 플로우 / 버튼 / 인터랙션 일관화)
+마지막 업데이트: 2026-05-14 (Phase 1 Stage 13: 종목 마스터 + 자연어 검색)
 
 ---
 
@@ -279,6 +279,51 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase
 - 홈 / 관심 / 매매 / 코치 / 원칙 / 설정 (실제 증권 앱처럼 홈 우선)
 
 ✅ `installDebug` SUCCESSFUL
+
+### Phase 1 Stage 13: 종목 마스터 + 자연어 검색 ✨ NEW
+사용자 요청: "삼성전자, 애플 같은 자연어로도 검색 가능해야".
+
+**문제**: 한투 OpenAPI에 통합 종목 검색 API가 없어 기존 `searchStocks`는 정확한 ticker(`005930`/`AAPL`)만 받음. "삼성전자" 입력 시 결과 0건.
+
+**해결 — 한투 공식 종목 마스터 파일 다운로드**:
+- 한투가 공개한 mst/cod zip 파일 (API 키 불필요, 누구나 다운로드)
+- KOSPI/KOSDAQ: cp949 고정폭 (`kospi_code.mst` / `kosdaq_code.mst`)
+- NASDAQ/NYSE: cp949 탭 구분 (`nasmst.cod` / `nysmst.cod`)
+- 합산 ~12,000 종목 (KOSPI ~900 + KOSDAQ ~1,800 + NASDAQ ~5,000 + NYSE ~3,500 정도)
+
+**새 파일**:
+- `data/remote/kis/stockmaster/`
+  - `KisStockMasterDownloader.kt` — OkHttp + ZipInputStream + cp949 디코드
+  - `KospiKosdaqMstParser.kt` — head[0..9]=단축코드, [21..]=한글명, tail 228/222 잘라냄
+  - `OverseasCodMstParser.kt` — \t split, Security type 2(Stock)+3(ETP)만 포함
+  - `StockMasterSyncService.kt` — 4종 다운로드 → ticker dedup → `stockDao.upsertAll`
+- `data/sync/StockMasterSyncWorker.kt` — 주1회 PeriodicWork(UNMETERED) + 최초 OneTime(CONNECTED)
+
+**기존 파일 변경**:
+- `StockDao.kt` — `searchByText(query)` 추가 (nameKo/nameEn/ticker LIKE + 정확/접두/부분 정렬), `count()`, `upsertAll()`
+- `StockRepository` / `StockRepositoryImpl` — `searchOnce(query)` / `masterCount()` 추가
+- `KisMarketDataSource.searchStocks` — **마스터 검색 1순위, 단일조회 fallback**. 마스터 비어있으면 기존 동작 유지.
+- `StockSearchScreen` — placeholder "삼성전자, 애플, 005930, AAPL", 결과 50개까지 표시. 상위 10개만 비동기 가격 fetch (한투 한도 보호).
+- `AICoachApplication.onCreate` — `StockMasterSyncWorker.enqueuePeriodic` + `masterCount() == 0` 시 `enqueueOnce`
+
+**아키텍처 결정**:
+- **별도 master 테이블 없이** 기존 `stocks` 테이블 재활용 — DB 마이그레이션 불필요, AppDatabase v8 유지.
+- REPLACE 정책 — 사용자가 검색·관심으로 추가한 메타도 마스터 데이터로 덮어쓰임(개선).
+- 우선주/스팩/ETF 포함 — Phase 1은 다 검색 가능. 필터 노이즈는 Phase 2.
+- AMEX는 Exchange enum에 별도 값 없어 일단 스킵 (필요 시 enum 확장).
+
+**한투 mst 포맷 (검증된 정보)**:
+- URL: `https://new.real.download.dws.co.kr/common/master/{kospi_code.mst|kosdaq_code.mst|nasmst.cod|nysmst.cod}.zip`
+- 한투 GitHub `koreainvestment/open-trading-api/stocks_info/kis_kospi_code_mst.py` 의 컬럼 너비 그대로 적용
+
+✅ `./gradlew.bat assembleDebug` BUILD SUCCESSFUL (58s)
+
+**실기기 검증 시 확인**:
+1. 첫 실행 후 ~30초 내 stocks 테이블에 ~12,000건 적재
+2. "삼성전자" / "애플" / "테슬라" / "엔비디아" 한글 검색 동작
+3. "tesla" / "AAPL" 영문 검색 동작
+4. 첫 동기화 전엔 기존 단일조회 fallback이 동작 (코드 직접 입력은 됨)
+5. 매주 자동 갱신 (Wi-Fi 연결 시)
 
 ### UI 정리 (BottomNav 5탭)
 - BottomTab에 **SETTINGS** 추가 (5개: 원칙/매매/관심/코치/설정)

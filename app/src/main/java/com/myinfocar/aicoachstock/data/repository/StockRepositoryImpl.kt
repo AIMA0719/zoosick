@@ -24,4 +24,9 @@ class StockRepositoryImpl @Inject constructor(
 
     override fun search(query: String): Flow<List<Stock>> =
         dao.search(query).map { list -> list.map { it.toDomain() } }
+
+    override suspend fun searchOnce(query: String): List<Stock> =
+        dao.searchByText(query).map { it.toDomain() }
+
+    override suspend fun masterCount(): Int = dao.count()
 }

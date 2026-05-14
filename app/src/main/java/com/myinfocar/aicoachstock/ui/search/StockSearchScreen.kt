@@ -80,7 +80,8 @@ class StockSearchViewModel @Inject constructor(
     val ui: StateFlow<StockSearchUiState> = _ui.asStateFlow()
 
     fun setQuery(q: String) {
-        _ui.update { it.copy(query = q.uppercase()) }
+        // uppercase 자동 변환 제거 — 한글 입력 지원. 마스터 검색은 LIKE라 대소문자 영향 적음.
+        _ui.update { it.copy(query = q) }
     }
 
     fun search() {
@@ -91,11 +92,23 @@ class StockSearchViewModel @Inject constructor(
             val result = marketDataSource.searchStocks(q)
             result.fold(
                 onSuccess = { stocks ->
-                    val hits = stocks.map { s ->
+                    // 1차: 가격 없이 즉시 표시 (검색 결과 50개까지 빨리 보이도록).
+                    val initialHits = stocks.map { SearchHit(it, tick = null) }
+                    _ui.update { it.copy(isSearching = false, results = initialHits) }
+
+                    // 2차: 상위 10개에 한해서만 현재가 비동기 fetch — 한투 단일조회 한도/속도 보호.
+                    stocks.take(10).forEach { s ->
                         val tick = marketDataSource.fetchClosePrice(s.ticker, s.market).getOrNull()
-                        SearchHit(s, tick)
+                        if (tick != null) {
+                            _ui.update { state ->
+                                state.copy(
+                                    results = state.results.map { hit ->
+                                        if (hit.stock.ticker == s.ticker) hit.copy(tick = tick) else hit
+                                    },
+                                )
+                            }
+                        }
                     }
-                    _ui.update { it.copy(isSearching = false, results = hits) }
                 },
                 onFailure = { e ->
                     _ui.update { it.copy(isSearching = false, errorMessage = e.message ?: "검색 실패") }
@@ -148,8 +161,8 @@ fun StockSearchScreen(
                 OutlinedTextField(
                     value = state.query,
                     onValueChange = viewModel::setQuery,
-                    label = { Text("종목코드") },
-                    placeholder = { Text("예: 005930 또는 NVDA") },
+                    label = { Text("종목명 또는 코드") },
+                    placeholder = { Text("예: 삼성전자, 애플, 005930, AAPL") },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
@@ -164,7 +177,7 @@ fun StockSearchScreen(
             }
 
             Text(
-                "6자리 숫자 → 국내, 알파벳 → 미국으로 시도합니다.",
+                "종목명(한글/영문)이나 코드로 검색하세요. 상위 10개 결과만 현재가를 표시합니다.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -192,7 +205,7 @@ fun StockSearchScreen(
 
                 state.results.isEmpty() && state.query.isBlank() -> EmptyState(
                     title = "종목을 검색해 보세요",
-                    description = "관심 있는 종목코드를 입력하면 한투 REST 단일 조회로 현재가까지 보여드려요.",
+                    description = "삼성전자, 애플처럼 이름으로 검색하거나 005930, AAPL 같은 코드로 찾을 수 있어요.",
                     icon = "🔍",
                 )
 

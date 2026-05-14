@@ -34,6 +34,7 @@ class KisMarketDataSource @Inject constructor(
     private val store: ApiCredentialStore,
     private val rateLimiter: KisRateLimiter,
     private val stockInfoService: com.myinfocar.aicoachstock.domain.stockinfo.StockInfoService,
+    private val stockRepository: com.myinfocar.aicoachstock.domain.repository.StockRepository,
 ) : MarketDataSource {
 
     override suspend fun fetchClosePrice(ticker: String, market: Market): Result<MarketTick> =
@@ -128,17 +129,29 @@ class KisMarketDataSource @Inject constructor(
         }.onFailure { Timber.w(it, "fetchClosePrice 실패 ticker=$ticker market=$market") }
 
     override suspend fun searchStocks(query: String): Result<List<Stock>> = runCatching {
-        val trimmed = query.trim().uppercase()
-        if (trimmed.isEmpty()) return@runCatching emptyList()
+        val raw = query.trim()
+        if (raw.isEmpty()) return@runCatching emptyList()
 
-        // 6자리 숫자 → 국내 단일 조회 시도. 알파벳 → 미국 단일 조회 시도. 둘 다 가능한 경우 양쪽 시도.
+        // 1순위: 종목 마스터 부분 매칭 — "삼성전자", "애플", "tesla", "005930", "AAPL" 모두 동작.
+        // 한글 입력은 그대로, 영문은 대문자 정규화하여 ticker 컬럼과 매칭률 ↑.
+        val masterMatches = runCatching {
+            val masterQuery = if (raw.any { it in 'a'..'z' }) raw.uppercase() else raw
+            stockRepository.searchOnce(masterQuery)
+        }.getOrElse {
+            Timber.w(it, "종목 마스터 검색 실패 — 단일 조회 fallback으로 진행")
+            emptyList()
+        }
+        if (masterMatches.isNotEmpty()) return@runCatching masterMatches
+
+        // 2순위 (fallback): 마스터가 비어있거나 일치 없음 — 휴리스틱 단일 조회.
+        // 6자리 숫자 → KR, 알파벳 1~6자 → US. 자연어 입력은 여기 도달해도 빈 결과.
+        val trimmed = raw.uppercase()
         val candidates = mutableListOf<Stock>()
         val isKrFormat = trimmed.length == 6 && trimmed.all { it.isDigit() }
         val isUsFormat = trimmed.all { it.isLetterOrDigit() } && trimmed.length in 1..6 && !isKrFormat
 
         if (isKrFormat) {
             fetchClosePrice(trimmed, Market.KR).getOrNull()?.let { tick ->
-                // 한투 search-stock-info로 정확한 메타 조회 (실패 시 휴리스틱 fallback).
                 val info = stockInfoService.fetchStockInfo(trimmed)
                 val name = info?.prdtName?.takeIf { it.isNotBlank() }
                     ?: krStockName(trimmed) ?: trimmed
