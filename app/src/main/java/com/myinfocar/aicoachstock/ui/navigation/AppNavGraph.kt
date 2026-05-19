@@ -35,6 +35,8 @@ import com.myinfocar.aicoachstock.ui.coach.CoachListScreen
 import com.myinfocar.aicoachstock.ui.entry.EntryChecklistScreen
 import com.myinfocar.aicoachstock.ui.holdings.HoldingsScreen
 import com.myinfocar.aicoachstock.ui.home.HomeScreen
+import com.myinfocar.aicoachstock.ui.order.OrderEntryScreen
+import com.myinfocar.aicoachstock.ui.order.OrdersScreen
 import com.myinfocar.aicoachstock.ui.poc.KisWsPocScreen
 import com.myinfocar.aicoachstock.ui.poc.LlmPocScreen
 import com.myinfocar.aicoachstock.ui.research.ResearchScreen
@@ -67,10 +69,13 @@ object AppRoutes {
     const val RESEARCH = "research"
     const val HOLDINGS = "holdings"
     const val STOCK_DETAIL = "stocks/{ticker}"
+    const val STOCK_ORDER = "stocks/{ticker}/order?side={side}"
+    const val ORDERS = "orders"
     const val ARG_TICKER = "ticker"
     const val ARG_ID = "id"
     const val ARG_TRADE_ID = "tradeId"
     const val ARG_SESSION_ID = "sessionId"
+    const val ARG_SIDE = "side"
 
     fun principleEdit(id: String? = null): String =
         if (id == null) "principles/edit" else "principles/edit?id=$id"
@@ -83,6 +88,8 @@ object AppRoutes {
     fun coachChat(sessionId: String): String = "coach/chat/$sessionId"
 
     fun stockDetail(ticker: String): String = "stocks/$ticker"
+
+    fun stockOrder(ticker: String, side: String): String = "stocks/$ticker/order?side=$side"
 }
 
 /** 하단 BottomNav에 표시되는 탭. 다른 라우트(예: 편집 화면)은 BottomNav 숨김. */
@@ -263,7 +270,36 @@ fun AppNavGraph(
             route = AppRoutes.STOCK_DETAIL,
             arguments = listOf(navArgument(AppRoutes.ARG_TICKER) { type = NavType.StringType }),
         ) {
-            StockDetailScreen(onBack = { navController.popBackStack() })
+            StockDetailScreen(
+                onBack = { navController.popBackStack() },
+                onPlaceOrder = { ticker, side ->
+                    navController.navigate(AppRoutes.stockOrder(ticker, side))
+                },
+                onOpenOrders = { navController.navigate(AppRoutes.ORDERS) },
+            )
+        }
+        composable(
+            route = AppRoutes.STOCK_ORDER,
+            arguments = listOf(
+                navArgument(AppRoutes.ARG_TICKER) { type = NavType.StringType },
+                navArgument(AppRoutes.ARG_SIDE) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = "BUY"
+                },
+            ),
+        ) {
+            OrderEntryScreen(
+                onBack = { navController.popBackStack() },
+                onOpenOrdersList = {
+                    navController.navigate(AppRoutes.ORDERS) {
+                        popUpTo(AppRoutes.STOCK_DETAIL) { inclusive = false }
+                    }
+                },
+            )
+        }
+        composable(AppRoutes.ORDERS) {
+            OrdersScreen(onBack = { navController.popBackStack() })
         }
     }
 }

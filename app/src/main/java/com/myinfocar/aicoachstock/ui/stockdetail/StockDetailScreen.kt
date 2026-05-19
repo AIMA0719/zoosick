@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
@@ -344,12 +345,23 @@ class StockDetailViewModel @Inject constructor(
 @Composable
 fun StockDetailScreen(
     onBack: () -> Unit,
+    onPlaceOrder: (ticker: String, side: String) -> Unit,
+    onOpenOrders: () -> Unit,
     viewModel: StockDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.ui.collectAsState()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            if (!state.isLoading) {
+                OrderBottomBar(
+                    ticker = state.ticker,
+                    onBuy = { onPlaceOrder(state.ticker, "BUY") },
+                    onSell = { onPlaceOrder(state.ticker, "SELL") },
+                )
+            }
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -371,6 +383,9 @@ fun StockDetailScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenOrders) {
+                        Icon(Icons.AutoMirrored.Filled.List, contentDescription = "주문 내역")
+                    }
                     IconButton(onClick = viewModel::load, enabled = !state.isLoading) {
                         Icon(Icons.Default.Refresh, contentDescription = "새로고침")
                     }
@@ -757,4 +772,39 @@ private fun AdvisorResultCard(res: TradingAdvisorService.Parsed) {
 private fun formatPrice(value: Double, market: Market): String = when (market) {
     Market.KR -> "%,d원".format(value.toLong())
     Market.US -> "$${"%.2f".format(value)}"
+}
+
+@Composable
+private fun OrderBottomBar(
+    ticker: String,
+    onBuy: () -> Unit,
+    onSell: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(AppTokens.space12),
+        horizontalArrangement = Arrangement.spacedBy(AppTokens.space8),
+    ) {
+        androidx.compose.material3.Button(
+            onClick = onSell,
+            modifier = Modifier.weight(1f),
+            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                containerColor = com.myinfocar.aicoachstock.ui.common.KrDownBlue,
+                contentColor = androidx.compose.ui.graphics.Color.White,
+            ),
+        ) {
+            Text("매도", fontWeight = FontWeight.Bold)
+        }
+        androidx.compose.material3.Button(
+            onClick = onBuy,
+            modifier = Modifier.weight(1f),
+            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                containerColor = com.myinfocar.aicoachstock.ui.common.KrUpRed,
+                contentColor = androidx.compose.ui.graphics.Color.White,
+            ),
+        ) {
+            Text("매수", fontWeight = FontWeight.Bold)
+        }
+    }
 }

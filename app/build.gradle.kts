@@ -100,6 +100,10 @@ dependencies {
     implementation(libs.androidx.hilt.work)
     ksp(libs.androidx.hilt.compiler)
 
+    // 생체 인증 (Stage 16-2 매수/매도 게이트). BiometricPrompt는 FragmentActivity가 호스트.
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.fragment.ktx)
+
     // LiteRT-LM (Gemma 4 E4B 온디바이스 추론) — MediaPipe tasks-genai 후속
     implementation(libs.litertlm.android)
 
