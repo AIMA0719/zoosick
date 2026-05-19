@@ -6,6 +6,8 @@ import com.myinfocar.aicoachstock.domain.market.ConnectionState
 import com.myinfocar.aicoachstock.domain.market.MarketDataStream
 import com.myinfocar.aicoachstock.domain.market.MarketHours
 import com.myinfocar.aicoachstock.domain.model.MarketTick
+import com.myinfocar.aicoachstock.domain.model.OrderBookLevel
+import com.myinfocar.aicoachstock.domain.model.OrderBookSnapshot
 import com.myinfocar.aicoachstock.domain.model.SubscriptionTarget
 import com.myinfocar.aicoachstock.domain.model.TickSource
 import kotlinx.coroutines.CoroutineScope
@@ -81,6 +83,7 @@ class KisWebSocketStream @Inject constructor(
     val connectedSinceEpochMillis: StateFlow<Long?> = _connectedSinceEpochMillis.asStateFlow()
 
     private val tickBus = MutableSharedFlow<MarketTick>(extraBufferCapacity = 256)
+    private val bookBus = MutableSharedFlow<OrderBookSnapshot>(extraBufferCapacity = 256)
 
     /** PoC 디버깅용 — 도착한 원본 텍스트(첫 1KB까지 truncate)를 그대로 흘려준다. */
     private val _rawMessages = MutableSharedFlow<String>(
@@ -168,8 +171,15 @@ class KisWebSocketStream @Inject constructor(
         val toAdd = newDesired.filter { it.ticker !in currentTickers }
         val toRemove = currentTickers - newTickers
 
-        toRemove.forEach { ws.send(buildControlMessage(approvalKey, it, register = false)) }
-        toAdd.forEach { ws.send(buildControlMessage(approvalKey, it.ticker, register = true)) }
+        // 체결(H0STCNT0)과 호가(H0STASP0) 각자 카운트 — 한투 스펙 그대로 별도 구독 메시지 전송.
+        toRemove.forEach { t ->
+            ws.send(buildControlMessage(approvalKey, t, TR_ID_KOSPI_EXEC, register = false))
+            ws.send(buildControlMessage(approvalKey, t, TR_ID_KOSPI_ASKING, register = false))
+        }
+        toAdd.forEach { target ->
+            ws.send(buildControlMessage(approvalKey, target.ticker, TR_ID_KOSPI_EXEC, register = true))
+            ws.send(buildControlMessage(approvalKey, target.ticker, TR_ID_KOSPI_ASKING, register = true))
+        }
 
         _subscriptions.value = newDesired
     }
@@ -179,18 +189,20 @@ class KisWebSocketStream @Inject constructor(
         val approvalKey = activeApprovalKey
         if (ws != null && approvalKey != null) {
             tickers.forEach { t ->
-                ws.send(buildControlMessage(approvalKey, t, register = false))
+                ws.send(buildControlMessage(approvalKey, t, TR_ID_KOSPI_EXEC, register = false))
+                ws.send(buildControlMessage(approvalKey, t, TR_ID_KOSPI_ASKING, register = false))
             }
         }
         _subscriptions.update { list -> list.filterNot { it.ticker in tickers } }
     }
 
-    /** 연결 직후 desired 구독을 일괄 재등록. */
+    /** 연결 직후 desired 구독을 일괄 재등록 (체결+호가). */
     private fun resubscribeAll() {
         val ws = webSocket ?: return
         val approvalKey = activeApprovalKey ?: return
         _subscriptions.value.forEach { target ->
-            ws.send(buildControlMessage(approvalKey, target.ticker, register = true))
+            ws.send(buildControlMessage(approvalKey, target.ticker, TR_ID_KOSPI_EXEC, register = true))
+            ws.send(buildControlMessage(approvalKey, target.ticker, TR_ID_KOSPI_ASKING, register = true))
         }
     }
 
@@ -220,6 +232,9 @@ class KisWebSocketStream @Inject constructor(
     override fun ticks(ticker: String): Flow<MarketTick> =
         tickBus.asSharedFlow().filter { it.ticker == ticker }
 
+    override fun books(ticker: String): Flow<OrderBookSnapshot> =
+        bookBus.asSharedFlow().filter { it.ticker == ticker }
+
     /** ws://... 그대로 OkHttp Request.Builder에 url로 넣으면 OkHttp가 거부 → http://...로 치환. */
     private fun toHttpUrl(wsUrl: String): String = wsUrl
         .replaceFirst("ws://", "http://")
@@ -228,6 +243,7 @@ class KisWebSocketStream @Inject constructor(
     private fun buildControlMessage(
         approvalKey: String,
         ticker: String,
+        trId: String,
         register: Boolean,
     ): String {
         val payload = buildJsonObject {
@@ -239,7 +255,7 @@ class KisWebSocketStream @Inject constructor(
             })
             put("body", buildJsonObject {
                 put("input", buildJsonObject {
-                    put("tr_id", TR_ID_KOSPI_EXEC)
+                    put("tr_id", trId)
                     put("tr_key", ticker)
                 })
             })
@@ -307,23 +323,36 @@ class KisWebSocketStream @Inject constructor(
         val encrypted = parts[0]
         if (encrypted != "0") return // 0=평문만 처리, 1=암호화 (Phase 1 OOS)
         val trId = parts[1]
-        if (trId != TR_ID_KOSPI_EXEC) return
         val countSafe = parts[2].toIntOrNull() ?: 1
         val payload = parts[3]
-
         val fields = payload.split("^")
-        // H0STCNT0: count*46 필드 (사양). count > 1 시 chunked로 각 종목 분리.
-        // 최소 필드 수보다 부족하면 skip.
-        if (fields.size < KOSPI_EXEC_FIELDS_REQUIRED) return
+        when (trId) {
+            TR_ID_KOSPI_EXEC -> dispatchExecFields(fields, countSafe)
+            TR_ID_KOSPI_ASKING -> dispatchAskingFields(fields, countSafe)
+        }
+    }
 
+    private fun dispatchExecFields(fields: List<String>, count: Int) {
+        if (fields.size < KOSPI_EXEC_FIELDS_REQUIRED) return
         val perTick = KOSPI_EXEC_FIELDS_PER_TICK
-        if (fields.size >= countSafe * perTick) {
-            fields.chunked(perTick).take(countSafe).forEach { chunk ->
+        if (fields.size >= count * perTick) {
+            fields.chunked(perTick).take(count).forEach { chunk ->
                 parseKospiExecTick(chunk)?.let { tickBus.tryEmit(it) }
             }
         } else {
-            // 사양과 다른 케이스: 첫 종목만 안전 처리.
             parseKospiExecTick(fields)?.let { tickBus.tryEmit(it) }
+        }
+    }
+
+    private fun dispatchAskingFields(fields: List<String>, count: Int) {
+        if (fields.size < KOSPI_ASKING_FIELDS_REQUIRED) return
+        val perTick = KOSPI_ASKING_FIELDS_PER_TICK
+        if (fields.size >= count * perTick) {
+            fields.chunked(perTick).take(count).forEach { chunk ->
+                parseKospiAskingTick(chunk)?.let { bookBus.tryEmit(it) }
+            }
+        } else {
+            parseKospiAskingTick(fields)?.let { bookBus.tryEmit(it) }
         }
     }
 
@@ -359,13 +388,60 @@ class KisWebSocketStream @Inject constructor(
         )
     }
 
+    /**
+     * H0STASP0 호가 필드 인덱스 (한투 OpenAPI 명세, Stage 15):
+     *   0: MKSC_SHRN_ISCD (종목코드)
+     *   1: BSOP_HOUR (영업시간 HHMMSS)
+     *   2: HOUR_CLS_CODE
+     *   3..12: ASKP1..ASKP10 (매도호가 1~10)
+     *  13..22: BIDP1..BIDP10 (매수호가 1~10)
+     *  23..32: ASKP_RSQN1..10 (매도호가 잔량)
+     *  33..42: BIDP_RSQN1..10 (매수호가 잔량)
+     *  43: TOTAL_ASKP_RSQN (총 매도잔량)
+     *  44: TOTAL_BIDP_RSQN (총 매수잔량)
+     *  ...
+     *  56: ANTC_CNPR (예상체결가, 인덱스는 운영 응답 기준으로 본 개발 시 검증)
+     */
+    private fun parseKospiAskingTick(fields: List<String>): OrderBookSnapshot? {
+        val ticker = fields.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return null
+        val asks = (0 until 5).mapNotNull { i ->
+            val price = fields.getOrNull(3 + i)?.toDoubleOrNull() ?: return@mapNotNull null
+            val qty = fields.getOrNull(23 + i)?.toLongOrNull() ?: 0L
+            OrderBookLevel(price = price, quantity = qty)
+        }
+        val bids = (0 until 5).mapNotNull { i ->
+            val price = fields.getOrNull(13 + i)?.toDoubleOrNull() ?: return@mapNotNull null
+            val qty = fields.getOrNull(33 + i)?.toLongOrNull() ?: 0L
+            OrderBookLevel(price = price, quantity = qty)
+        }
+        val totalAsk = fields.getOrNull(43)?.toLongOrNull() ?: 0L
+        val totalBid = fields.getOrNull(44)?.toLongOrNull() ?: 0L
+        val expected = fields.getOrNull(KOSPI_ASKING_EXPECTED_INDEX)?.toDoubleOrNull()
+        if (asks.isEmpty() && bids.isEmpty()) return null
+        return OrderBookSnapshot(
+            ticker = ticker,
+            asks = asks,
+            bids = bids,
+            totalAskQty = totalAsk,
+            totalBidQty = totalBid,
+            expectedPrice = expected?.takeIf { it > 0 },
+            ts = Instant.now(),
+            source = TickSource.WS_LIVE,
+        )
+    }
+
     private companion object {
         const val TR_ID_KOSPI_EXEC = "H0STCNT0"
+        const val TR_ID_KOSPI_ASKING = "H0STASP0"
         const val TR_ID_PINGPONG = "PINGPONG"
         const val SUBSCRIPTION_LIMIT = 41
         const val NORMAL_CLOSE = 1000
         const val MAX_RAW_LOG_CHARS = 1024
         const val KOSPI_EXEC_FIELDS_REQUIRED = 14
         const val KOSPI_EXEC_FIELDS_PER_TICK = 46
+        // 호가 한 종목당 필드 수 (한투 H0STASP0 사양). 운영 시 검증 필요.
+        const val KOSPI_ASKING_FIELDS_REQUIRED = 45
+        const val KOSPI_ASKING_FIELDS_PER_TICK = 59
+        const val KOSPI_ASKING_EXPECTED_INDEX = 56
     }
 }

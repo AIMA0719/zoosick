@@ -16,9 +16,12 @@ import com.myinfocar.aicoachstock.data.remote.kis.dto.StockInfoOutput
 import com.myinfocar.aicoachstock.data.remote.kis.dto.TimeChartBar
 import com.myinfocar.aicoachstock.data.remote.kis.market.KisStockInfoApi
 import com.myinfocar.aicoachstock.domain.auth.ApiCredentialStore
+import com.myinfocar.aicoachstock.domain.model.Candle
+import com.myinfocar.aicoachstock.domain.model.Timeframe
 import retrofit2.HttpException
 import timber.log.Timber
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
@@ -209,6 +212,127 @@ class StockInfoService @Inject constructor(
         if (resp.rtCd == "0") resp.output2 else emptyList()
     }.onFailure { Timber.w(it, "fetchTimeChart 실패 $ticker") }.getOrElse { emptyList() }
 
+    /**
+     * 타임프레임 통합 캔들 조회 (Stage 15).
+     *
+     * - Intraday(MIN_1/5/15/60): 한투 timeChart(분봉) 호출. 응답이 1분봉이라 5/15/60분은 집계.
+     * - Period(DAY/WEEK/MONTH/YEAR): 한투 dailyChart의 FID_PERIOD_DIV_CODE 분기.
+     */
+    suspend fun fetchCandles(
+        ticker: String,
+        timeframe: Timeframe,
+        count: Int = 60,
+    ): List<Candle> = if (timeframe.isIntraday) {
+        fetchIntradayCandles(ticker, timeframe, count)
+    } else {
+        fetchPeriodCandles(ticker, timeframe, count)
+    }
+
+    private suspend fun fetchIntradayCandles(
+        ticker: String,
+        timeframe: Timeframe,
+        count: Int,
+    ): List<Candle> = runCatching {
+        val minute1 = fetchTimeChart(ticker)
+            .mapNotNull { it.toCandle1Min() }
+            .sortedBy { it.ts }
+        val aggregated = if (timeframe.intradayMinutes == 1) minute1 else aggregateMinutes(minute1, timeframe)
+        aggregated.takeLast(count)
+    }.onFailure { Timber.w(it, "fetchIntradayCandles 실패 $ticker $timeframe") }.getOrElse { emptyList() }
+
+    private suspend fun fetchPeriodCandles(
+        ticker: String,
+        timeframe: Timeframe,
+        count: Int,
+    ): List<Candle> = runCatching {
+        val creds = store.current() ?: return@runCatching emptyList()
+        val token = authService.ensureAccessToken().getOrElse { return@runCatching emptyList() }
+        rateLimiter.await()
+        val period = timeframe.kisPeriodCode ?: "D"
+        val today = LocalDate.now(KST)
+        val backDays = when (timeframe) {
+            Timeframe.DAY -> count + 10L
+            Timeframe.WEEK -> count * 7L + 14L
+            Timeframe.MONTH -> count * 31L + 31L
+            Timeframe.YEAR -> count * 366L + 366L
+            else -> count + 10L
+        }
+        val start = today.minusDays(backDays)
+        val url = creds.env.restBaseUrl + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        val resp = api.dailyChart(
+            url = url,
+            authorization = "Bearer $token",
+            appKey = creds.appKey,
+            appSecret = creds.appSecret,
+            trId = "FHKST03010100",
+            fidInputIscd = ticker,
+            fidInputDate1 = start.format(DATE_FMT),
+            fidInputDate2 = today.format(DATE_FMT),
+            fidPeriodDivCode = period,
+        )
+        if (resp.rtCd != "0") emptyList()
+        else resp.output2.mapNotNull { it.toCandle(timeframe) }
+            .sortedBy { it.ts }
+            .takeLast(count)
+    }.onFailure { Timber.w(it, "fetchPeriodCandles 실패 $ticker $timeframe") }.getOrElse { emptyList() }
+
+    /** 1분봉(TimeChartBar) → Candle 매퍼. 실패시 null. */
+    private fun com.myinfocar.aicoachstock.data.remote.kis.dto.TimeChartBar.toCandle1Min(): Candle? {
+        val date = stckBsopDate?.takeIf { it.length == 8 } ?: return null
+        val time = stckCntgHour?.takeIf { it.length == 6 } ?: return null
+        val o = stckOprc?.toDoubleOrNull() ?: return null
+        val h = stckHgpr?.toDoubleOrNull() ?: return null
+        val l = stckLwpr?.toDoubleOrNull() ?: return null
+        val c = stckPrpr?.toDoubleOrNull() ?: return null
+        val v = cntgVol?.toLongOrNull() ?: 0L
+        val ldt = LocalDateTime.parse("$date$time", TIMESTAMP_FMT)
+        return Candle(
+            ts = ldt.atZone(KST).toInstant(),
+            open = o, high = h, low = l, close = c, volume = v,
+            timeframe = Timeframe.MIN_1,
+        )
+    }
+
+    /** 일/주/월/년봉(DailyChartBar) → Candle 매퍼. 실패시 null. */
+    private fun com.myinfocar.aicoachstock.data.remote.kis.dto.DailyChartBar.toCandle(tf: Timeframe): Candle? {
+        val date = stckBsopDate?.takeIf { it.length == 8 } ?: return null
+        val o = stckOprc?.toDoubleOrNull() ?: return null
+        val h = stckHgpr?.toDoubleOrNull() ?: return null
+        val l = stckLwpr?.toDoubleOrNull() ?: return null
+        val c = stckClpr?.toDoubleOrNull() ?: return null
+        val v = acmlVol?.toLongOrNull() ?: 0L
+        val ld = LocalDate.parse(date, DATE_FMT)
+        return Candle(
+            ts = ld.atStartOfDay(KST).toInstant(),
+            open = o, high = h, low = l, close = c, volume = v,
+            timeframe = tf,
+        )
+    }
+
+    /** 1분봉 리스트를 timeframe 분 단위로 묶어 집계. KST 분 경계 기준. */
+    private fun aggregateMinutes(minute1: List<Candle>, timeframe: Timeframe): List<Candle> {
+        val span = timeframe.intradayMinutes ?: return minute1
+        if (minute1.isEmpty() || span <= 1) return minute1
+        val grouped = minute1.groupBy { c ->
+            val ld = c.ts.atZone(KST).toLocalDateTime()
+            val bucketMinute = (ld.hour * 60 + ld.minute) / span * span
+            ld.toLocalDate().atTime(bucketMinute / 60, bucketMinute % 60).atZone(KST).toInstant()
+        }
+        return grouped.entries
+            .sortedBy { it.key }
+            .map { (ts, bars) ->
+                Candle(
+                    ts = ts,
+                    open = bars.first().open,
+                    high = bars.maxOf { it.high },
+                    low = bars.minOf { it.low },
+                    close = bars.last().close,
+                    volume = bars.sumOf { it.volume },
+                    timeframe = timeframe,
+                )
+            }
+    }
+
     /** 배당 일정. fromDays~toDays 기간. */
     suspend fun fetchDividends(fromDays: Int = 0, toDays: Int = 60, ticker: String? = null): List<DividendItem> = runCatching {
         val creds = store.current() ?: return@runCatching emptyList()
@@ -318,6 +442,7 @@ class StockInfoService @Inject constructor(
     private companion object {
         val KST: ZoneId = ZoneId.of("Asia/Seoul")
         val DATE_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd")
+        val TIMESTAMP_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
         const val CACHE_TTL_MS = 24L * 60 * 60 * 1000
     }
 }

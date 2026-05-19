@@ -43,6 +43,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.myinfocar.aicoachstock.data.remote.kis.dto.AskingPriceResponse
 import com.myinfocar.aicoachstock.data.remote.kis.dto.DailyChartBar
 import com.myinfocar.aicoachstock.data.remote.kis.dto.InvestorDailyItem
@@ -51,8 +58,17 @@ import com.myinfocar.aicoachstock.data.remote.kis.dto.StockInfoOutput
 import com.myinfocar.aicoachstock.domain.advisor.AdvisorEvent
 import com.myinfocar.aicoachstock.domain.advisor.TradingAdvisorService
 import com.myinfocar.aicoachstock.domain.market.MarketDataSource
+import com.myinfocar.aicoachstock.domain.market.MarketDataStream
+import com.myinfocar.aicoachstock.domain.model.Candle
+import com.myinfocar.aicoachstock.domain.model.ChartType
 import com.myinfocar.aicoachstock.domain.model.Market
 import com.myinfocar.aicoachstock.domain.model.MarketTick
+import com.myinfocar.aicoachstock.domain.model.OrderBookLevel
+import com.myinfocar.aicoachstock.domain.model.OrderBookSnapshot
+import com.myinfocar.aicoachstock.domain.model.SubscriptionReason
+import com.myinfocar.aicoachstock.domain.model.SubscriptionTarget
+import com.myinfocar.aicoachstock.domain.model.TickSource
+import com.myinfocar.aicoachstock.domain.model.Timeframe
 import com.myinfocar.aicoachstock.domain.repository.StockRepository
 import com.myinfocar.aicoachstock.domain.stockinfo.StockInfoService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -61,6 +77,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
 import javax.inject.Inject
 
 data class StockDetailUiState(
@@ -76,6 +95,13 @@ data class StockDetailUiState(
     val info: StockInfoOutput? = null,
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
+    // Stage 15 차트 풀세트
+    val timeframe: Timeframe = Timeframe.DAY,
+    val chartType: ChartType = ChartType.CANDLE,
+    val candles: List<Candle> = emptyList(),
+    val candlesLoading: Boolean = false,
+    val crosshairIndex: Int? = null,
+    val orderBook: OrderBookSnapshot? = null,
     // AI 코칭 상태
     val advisorStreaming: String = "",
     val advisorIsGenerating: Boolean = false,
@@ -90,6 +116,7 @@ class StockDetailViewModel @Inject constructor(
     private val stockRepo: StockRepository,
     private val stockInfoService: StockInfoService,
     private val marketDataSource: MarketDataSource,
+    private val marketDataStream: MarketDataStream,
     private val advisorService: TradingAdvisorService,
 ) : ViewModel() {
 
@@ -100,6 +127,8 @@ class StockDetailViewModel @Inject constructor(
 
     init {
         load()
+        startTickStream()
+        startBookStream()
     }
 
     fun load() {
@@ -125,12 +154,147 @@ class StockDetailViewModel @Inject constructor(
                     tick = tick,
                     chart = chart,
                     asking = asking,
+                    orderBook = asking?.toOrderBookSnapshot(argTicker),
                     investors = investors,
                     news = news,
                     info = info,
                 )
             }
+            // 차트 풀세트 — 기본 일봉 60개
+            fetchCandlesFor(_ui.value.timeframe)
         }
+    }
+
+    private fun startBookStream() {
+        viewModelScope.launch {
+            marketDataStream.books(argTicker).collect { snap ->
+                _ui.update { it.copy(orderBook = snap) }
+            }
+        }
+    }
+
+    private fun com.myinfocar.aicoachstock.data.remote.kis.dto.AskingPriceResponse.toOrderBookSnapshot(ticker: String): OrderBookSnapshot? {
+        val o1 = output1 ?: return null
+        fun level(price: String?, qty: String?): OrderBookLevel? {
+            val p = price?.toDoubleOrNull() ?: return null
+            if (p <= 0.0) return null
+            return OrderBookLevel(p, qty?.toLongOrNull() ?: 0L)
+        }
+        val asks = listOfNotNull(
+            level(o1.askp1, o1.askpRsqn1),
+            level(o1.askp2, o1.askpRsqn2),
+            level(o1.askp3, o1.askpRsqn3),
+            level(o1.askp4, o1.askpRsqn4),
+            level(o1.askp5, o1.askpRsqn5),
+        )
+        val bids = listOfNotNull(
+            level(o1.bidp1, o1.bidpRsqn1),
+            level(o1.bidp2, o1.bidpRsqn2),
+            level(o1.bidp3, o1.bidpRsqn3),
+            level(o1.bidp4, o1.bidpRsqn4),
+            level(o1.bidp5, o1.bidpRsqn5),
+        )
+        if (asks.isEmpty() && bids.isEmpty()) return null
+        val expected = output2?.antcCnpr?.toDoubleOrNull()?.takeIf { it > 0 }
+        return OrderBookSnapshot(
+            ticker = ticker,
+            asks = asks,
+            bids = bids,
+            totalAskQty = o1.totalAskpRsqn?.toLongOrNull() ?: 0L,
+            totalBidQty = o1.totalBidpRsqn?.toLongOrNull() ?: 0L,
+            expectedPrice = expected,
+            ts = Instant.now(),
+            source = TickSource.REST_FALLBACK,
+        )
+    }
+
+    fun setTimeframe(tf: Timeframe) {
+        if (_ui.value.timeframe == tf && _ui.value.candles.isNotEmpty()) return
+        _ui.update { it.copy(timeframe = tf, crosshairIndex = null) }
+        viewModelScope.launch { fetchCandlesFor(tf) }
+    }
+
+    fun setChartType(ct: ChartType) {
+        _ui.update { it.copy(chartType = ct) }
+    }
+
+    fun setCrosshair(idx: Int?) {
+        _ui.update { it.copy(crosshairIndex = idx) }
+    }
+
+    private suspend fun fetchCandlesFor(tf: Timeframe) {
+        _ui.update { it.copy(candlesLoading = true) }
+        val candles = stockInfoService.fetchCandles(argTicker, tf, count = 60)
+        _ui.update { it.copy(candles = candles, candlesLoading = false) }
+    }
+
+    /** WS 틱 구독 → 마지막 캔들 close 갱신 + 분 경계 신규 봉 push. */
+    private fun startTickStream() {
+        viewModelScope.launch {
+            // 우선 종목 메타 조회로 market 확정 (load와 race 대비 한 번 더 조회).
+            val market = stockRepo.findByTicker(argTicker)?.market ?: Market.KR
+            marketDataStream.subscribe(
+                listOf(
+                    SubscriptionTarget(
+                        ticker = argTicker,
+                        market = market,
+                        reason = SubscriptionReason.WATCHLIST,
+                        priority = 1,
+                    )
+                )
+            )
+            marketDataStream.ticks(argTicker).collect { tick ->
+                _ui.update { st ->
+                    st.copy(
+                        tick = tick,
+                        candles = mergeTickIntoCandles(st.candles, tick, st.timeframe),
+                    )
+                }
+            }
+        }
+    }
+
+    /** 마지막 캔들 close 갱신 또는 분 경계 넘었으면 신규 봉 push. */
+    private fun mergeTickIntoCandles(
+        candles: List<Candle>,
+        tick: MarketTick,
+        tf: Timeframe,
+    ): List<Candle> {
+        if (candles.isEmpty()) return candles
+        val last = candles.last()
+        val nextBucket = nextBucketAfter(last.ts, tf)
+        return if (!tick.lastTickAt.isBefore(nextBucket)) {
+            candles + Candle(
+                ts = nextBucket,
+                open = tick.price,
+                high = tick.price,
+                low = tick.price,
+                close = tick.price,
+                volume = 0L,
+                timeframe = tf,
+            )
+        } else {
+            val updated = last.copy(
+                high = maxOf(last.high, tick.price),
+                low = minOf(last.low, tick.price),
+                close = tick.price,
+            )
+            candles.dropLast(1) + updated
+        }
+    }
+
+    private fun nextBucketAfter(start: Instant, tf: Timeframe): Instant {
+        val zone = ZoneId.of("Asia/Seoul")
+        val ldt = LocalDateTime.ofInstant(start, zone)
+        val next = when (tf) {
+            Timeframe.MIN_1, Timeframe.MIN_5, Timeframe.MIN_15, Timeframe.MIN_60 ->
+                ldt.plusMinutes((tf.intradayMinutes ?: 1).toLong())
+            Timeframe.DAY -> ldt.plusDays(1)
+            Timeframe.WEEK -> ldt.plusWeeks(1)
+            Timeframe.MONTH -> ldt.plusMonths(1)
+            Timeframe.YEAR -> ldt.plusYears(1)
+        }
+        return next.atZone(zone).toInstant()
     }
 
     fun runAdvisor() {
@@ -232,8 +396,22 @@ fun StockDetailScreen(
             verticalArrangement = Arrangement.spacedBy(AppTokens.space12),
         ) {
             PriceHeader(state)
-            if (state.chart.isNotEmpty()) ChartCard(state.chart)
-            state.asking?.let { AskingCard(it, state.market) }
+            ChartCard(
+                candles = state.candles,
+                timeframe = state.timeframe,
+                chartType = state.chartType,
+                crosshairIndex = state.crosshairIndex,
+                candlesLoading = state.candlesLoading,
+                market = state.market,
+                onTimeframeSelect = viewModel::setTimeframe,
+                onChartTypeToggle = {
+                    viewModel.setChartType(
+                        if (state.chartType == ChartType.CANDLE) ChartType.LINE else ChartType.CANDLE
+                    )
+                },
+                onCrosshairChange = viewModel::setCrosshair,
+            )
+            state.orderBook?.let { OrderBookCard(it, state.market) }
             if (state.investors.isNotEmpty()) InvestorCard(state.investors)
             state.info?.let { InfoCard(it) }
             if (state.news.isNotEmpty()) NewsCard(state.news)
@@ -290,58 +468,140 @@ private fun PriceHeader(state: StockDetailUiState) {
 }
 
 @Composable
-private fun ChartCard(bars: List<DailyChartBar>) {
+private fun ChartCard(
+    candles: List<Candle>,
+    timeframe: Timeframe,
+    chartType: ChartType,
+    crosshairIndex: Int?,
+    candlesLoading: Boolean,
+    market: Market,
+    onTimeframeSelect: (Timeframe) -> Unit,
+    onChartTypeToggle: () -> Unit,
+    onCrosshairChange: (Int?) -> Unit,
+) {
     AppCard(padding = AppTokens.space16) {
-        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
-            Text("일봉 차트  (최근 ${bars.size}거래일)", style = MaterialTheme.typography.titleMedium)
-            // bars는 최근→과거 순으로 옴 — 시간 순으로 뒤집기.
-            val prices = bars.mapNotNull { it.stckClpr?.toDoubleOrNull() }.reversed()
-            PriceLineChart(prices = prices)
-            val first = prices.firstOrNull() ?: 0.0
-            val last = prices.lastOrNull() ?: 0.0
-            if (first > 0) {
-                val pct = (last - first) / first * 100
-                Text(
-                    "기간 등락률 ${"%+.2f".format(pct)}%",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = com.myinfocar.aicoachstock.ui.common.pnlColor(pct),
+        Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space8)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("차트", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.weight(1f))
+                AssistChip(
+                    onClick = onChartTypeToggle,
+                    label = { Text(if (chartType == ChartType.CANDLE) "캔들" else "라인") },
                 )
+            }
+            TimeframeTabs(selected = timeframe, onSelect = onTimeframeSelect)
+            if (candlesLoading) {
+                Box(modifier = Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (candles.isNotEmpty()) {
+                RealtimeChart(
+                    candles = candles,
+                    chartType = chartType,
+                    crosshairIndex = crosshairIndex,
+                    onCrosshairChange = onCrosshairChange,
+                )
+                crosshairIndex?.let { idx ->
+                    if (idx in candles.indices) CrosshairLabel(candles[idx], market)
+                }
+                ChartSummary(candles = candles)
+            } else {
+                Box(modifier = Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        "데이터 없음",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun AskingCard(resp: AskingPriceResponse, market: Market) {
-    val levels = resp.output1 ?: return
-    val sums = resp.output2
+private fun TimeframeTabs(selected: Timeframe, onSelect: (Timeframe) -> Unit) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
+        items(Timeframe.entries.toList()) { tf ->
+            FilterChip(
+                selected = selected == tf,
+                onClick = { onSelect(tf) },
+                label = { Text(tf.labelKo) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun CrosshairLabel(c: Candle, market: Market) {
+    val zone = ZoneId.of("Asia/Seoul")
+    val ldt = LocalDateTime.ofInstant(c.ts, zone)
+    Column {
+        Text(
+            "${ldt.year}-%02d-%02d %02d:%02d".format(ldt.monthValue, ldt.dayOfMonth, ldt.hour, ldt.minute),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "O ${formatPrice(c.open, market)}  H ${formatPrice(c.high, market)}  L ${formatPrice(c.low, market)}  C ${formatPrice(c.close, market)}",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            "거래량 ${"%,d".format(c.volume)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ChartSummary(candles: List<Candle>) {
+    val first = candles.firstOrNull()?.close ?: return
+    val last = candles.lastOrNull()?.close ?: return
+    if (first <= 0) return
+    val pct = (last - first) / first * 100
+    Text(
+        "기간 등락률 ${"%+.2f".format(pct)}%",
+        style = MaterialTheme.typography.labelMedium,
+        color = com.myinfocar.aicoachstock.ui.common.pnlColor(pct),
+    )
+}
+
+@Composable
+private fun OrderBookCard(book: OrderBookSnapshot, market: Market) {
+    val askColor = com.myinfocar.aicoachstock.ui.common.KrDownBlue
+    val bidColor = com.myinfocar.aicoachstock.ui.common.KrUpRed
+    val sourceLabel = if (book.source == TickSource.WS_LIVE) "실시간" else "REST"
     AppCard(padding = AppTokens.space16) {
         Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
-            Text("호가  (5호가)", style = MaterialTheme.typography.titleMedium)
-            sums?.let {
-                if (!it.antcCnpr.isNullOrBlank() && it.antcCnpr != "0") {
-                    Text(
-                        "예상체결가 ${it.antcCnpr}  (${it.antcCntgPrdyCtrt}%)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("호가 (5호가)", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    sourceLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            book.expectedPrice?.let { p ->
+                Text(
+                    "예상체결가 ${formatPrice(p, market)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Spacer(Modifier.height(AppTokens.space4))
-            val askColor = com.myinfocar.aicoachstock.ui.common.KrDownBlue
-            val bidColor = com.myinfocar.aicoachstock.ui.common.KrUpRed
-            listOf(
-                "매도1" to (levels.askp1 to levels.askpRsqn1),
-                "매도2" to (levels.askp2 to levels.askpRsqn2),
-                "매도3" to (levels.askp3 to levels.askpRsqn3),
-            ).forEach { (label, pair) -> LevelRow(label, pair.first, pair.second, askColor) }
-            listOf(
-                "매수1" to (levels.bidp1 to levels.bidpRsqn1),
-                "매수2" to (levels.bidp2 to levels.bidpRsqn2),
-                "매수3" to (levels.bidp3 to levels.bidpRsqn3),
-            ).forEach { (label, pair) -> LevelRow(label, pair.first, pair.second, bidColor) }
+            // 매도 호가: 5호가 위 → 1호가 아래 (시각적으로 매도창)
+            val asks = book.asks.take(5)
+            asks.reversed().forEachIndexed { i, level ->
+                val rank = asks.size - i
+                LevelRow("매도$rank", formatPrice(level.price, market), "%,d".format(level.quantity), askColor)
+            }
+            // 매수 호가: 1호가 위 → 5호가 아래
+            book.bids.take(5).forEachIndexed { i, level ->
+                LevelRow("매수${i + 1}", formatPrice(level.price, market), "%,d".format(level.quantity), bidColor)
+            }
             Text(
-                "총 매도잔량 ${levels.totalAskpRsqn ?: "-"} / 총 매수잔량 ${levels.totalBidpRsqn ?: "-"}",
+                "총 매도잔량 ${"%,d".format(book.totalAskQty)} / 총 매수잔량 ${"%,d".format(book.totalBidQty)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -350,11 +610,11 @@ private fun AskingCard(resp: AskingPriceResponse, market: Market) {
 }
 
 @Composable
-private fun LevelRow(label: String, price: String?, qty: String?, color: Color) {
+private fun LevelRow(label: String, price: String, qty: String, color: Color) {
     Row(modifier = Modifier.fillMaxWidth()) {
         Text(label, modifier = Modifier.width(48.dp), color = color, style = MaterialTheme.typography.bodyMedium)
-        Text(price ?: "-", modifier = Modifier.weight(1f), color = color, style = MaterialTheme.typography.bodyMedium)
-        Text(qty ?: "-", style = MaterialTheme.typography.bodyMedium)
+        Text(price, modifier = Modifier.weight(1f), color = color, style = MaterialTheme.typography.bodyMedium)
+        Text(qty, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

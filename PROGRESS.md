@@ -2,7 +2,7 @@
 
 > **다음 작업 시 이 파일 먼저 읽고 시작.** PRD는 `docs/AICoachStock-PRD/` 안에 5개.
 
-마지막 업데이트: 2026-05-19 (Stage 14: 수동 주문 허용 PRD 개정 — Stage 15/16 진입 준비)
+마지막 업데이트: 2026-05-19 (Stage 15: 실시간 차트 토스 풀세트 — Stage 16 수동 주문 대기)
 
 ---
 
@@ -343,6 +343,50 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase
 - Stage 15: 실시간 차트 풀세트 — `StockDetailScreen` + `KisWebSocketStream`(H0STASP0 호가 TR 추가 구독) + `KisStockInfoApi`(분봉 API는 이미 통합됨, UI 토글만)
 - Stage 16: 수동 주문 — 한투 주문 4종(국내) + 4종(해외) 통합, OrderEntity + DAO + Repository(AppDatabase v8→v9), `OrderEntryScreen` / `OrderConfirmScreen` / `OrdersScreen`, BiometricPrompt 게이트
 
+### Phase 1 Stage 15: 실시간 차트 토스 풀세트 ✨ NEW
+사용자 요청: "토스 증권 앱처럼 내가 선택한 주식의 실시간 차트". Stage 11에서 30일 일봉 라인 차트만 있던 종목 상세를 한 Canvas에 캔들+라인 토글 / 분봉·일·주·월·년 토글 / MA 5·20·60 / 거래량 / 크로스헤어 / 실시간 5호가까지 통합.
+
+**도메인 모델 신설**:
+- `domain/model/Candle.kt` — ts/open/high/low/close/volume/timeframe + isUp.
+- `domain/model/Timeframe.kt` — MIN_1/5/15/60(intraday) / DAY/WEEK/MONTH/YEAR(period) 8개. kisPeriodCode/intradayMinutes/labelKo 부가 정보.
+- `domain/model/OrderBookSnapshot.kt` — asks/bids 5호가 + totalAskQty/totalBidQty + expectedPrice + source(WS_LIVE/REST_FALLBACK).
+- `domain/model/Enums.kt`에 ChartType { LINE, CANDLE } 추가.
+
+**StockInfoService 확장**:
+- `fetchCandles(ticker, timeframe, count=60)` — Intraday는 한투 `timeChart`(`FHKST03010200`) 1분봉 응답 → 5/15/60분 KST 분 경계로 클라이언트 집계 (open=첫 1분 open, high=max, low=min, close=마지막 1분 close, volume=합). Period는 `dailyChart`(`FHKST03010100`)의 FID_PERIOD_DIV_CODE = D/W/M/Y 직매핑. backDays buffer를 W/M/Y마다 다르게.
+- `TimeChartBar` / `DailyChartBar` → `Candle` 매퍼 (KST 봉 시작 시각 기준).
+
+**RealtimeChart Composable 신설** (`ui/stockdetail/RealtimeChart.kt`, 240줄):
+- 한 Canvas에 캔들(또는 라인) + MA + 거래량 + 크로스헤어 통합.
+- 영역 비율: 상단 70% 캔들+MA, 하단 25% 거래량, 5% 갭. Y축 그리드 5등분.
+- 한국 관례: 상승 KrUpRed, 하락 KrDownBlue, 동가 회색.
+- MA 5/20/60 색상 = 노랑/주황/보라.
+- 크로스헤어: `detectDragGesturesAfterLongPress` → 길게 누름 + 드래그 시 십자선 + 시점 봉 강조.
+
+**MarketDataStream 인터페이스 + KisWebSocketStream 강화**:
+- 인터페이스에 `books(ticker): Flow<OrderBookSnapshot>` 신규.
+- `H0STASP0` 호가 TR 추가 구독 — `subscribe`/`unsubscribe`/`resubscribeAll`/`buildControlMessage` 가 체결+호가 둘 다 메시지 전송. 사용자 결정 "각자 카운트(한투 스펙)" 그대로 별도 슬롯 가정.
+- `handleTickFrame` trId 분기 → `dispatchExecFields` / `dispatchAskingFields`.
+- `parseKospiAskingTick` — H0STASP0 필드 인덱스 0=종목코드, 3..7=매도1~5, 13..17=매수1~5, 23..27=매도잔량1~5, 33..37=매수잔량1~5, 43=총매도잔량, 44=총매수잔량, 56=예상체결가. KOSPI_ASKING_FIELDS_PER_TICK=59 가정(운영 시 검증).
+- `bookBus` SharedFlow extraBufferCapacity=256.
+
+**StockDetailViewModel + UI 통합**:
+- `StockDetailUiState`에 timeframe/chartType/candles/candlesLoading/crosshairIndex/orderBook 신규 필드.
+- `marketDataStream` 주입. `startTickStream`가 SubscriptionTarget(priority=1)로 subscribe → `ticks(argTicker)` collect → `mergeTickIntoCandles`로 마지막 캔들 high/low/close 갱신 또는 `nextBucketAfter`로 분 경계 넘으면 신규 봉 push (KST LocalDateTime 기준 plusMinutes/plusDays/plusWeeks/plusMonths/plusYears).
+- `startBookStream`가 `books(argTicker)` collect → orderBook 갱신.
+- `setTimeframe`/`setChartType`/`setCrosshair` 액션. setTimeframe 호출 시 fetchCandles 재호출 + crosshair reset.
+- 초기 load 시 한투 `inquire-asking-price-exp-ccn` 응답을 `AskingPriceResponse.toOrderBookSnapshot`로 변환해 REST 폴백 1회 채움 → WS 도착 시 source가 WS_LIVE로 바뀜.
+- 신규 `ChartCard` Composable — LazyRow FilterChip 8개(Timeframe.entries) + AssistChip(캔들/라인) + RealtimeChart + CrosshairLabel(O/H/L/C+거래량+시각) + ChartSummary(기간 등락률).
+- 신규 `OrderBookCard` Composable — source label(실시간/REST) + 예상체결가 + 매도 5호가(위→아래, 5→1) + 매수 5호가(1→5) + 총 잔량. `LevelRow` 시그니처를 non-null String로 정리.
+
+**처리하지 않은 항목 (Stage 15 OOS)**:
+- H0STASP0 필드 인덱스 운영 검증 — 한투 응답 받고 KOSPI_ASKING_EXPECTED_INDEX(56) 등 조정 가능성.
+- 분봉 거래량을 1분 cntg_vol 합산으로 처리 — WS 틱이 마지막 캔들에 들어올 때 volume은 그대로(0이거나 기존 값). 누적 거래량 차분 계산은 다음 보강.
+- 차트 Y축 가격 라벨 / X축 시간 라벨 — 시각만 표시 (CrosshairLabel에서). 항상 표시되는 가격축 라벨은 다음 보강.
+- 해외 종목 분봉/호가는 한투 KR 전용 TR이라 미적용. US 종목은 일봉/주봉/월봉/년봉 + 라인만 동작.
+
+✅ `./gradlew.bat assembleDebug` BUILD SUCCESSFUL (23s)
+
 ### UI Stage A+B: 토스 증권 톤 개편 ✨ NEW (worktree: `ui-toss-overhaul`)
 사용자 요청: "토스 증권 앱처럼 일괄 개편" + "클릭 이펙트/화면 전환 애니메이션" + "관심 종목 카드에 현재가 표시 + 클릭 시 상세".
 
@@ -391,14 +435,7 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase
 
 ## 🚧 진행 중 / 다음 시작점
 
-**바로 다음 (Stage 15)**: 실시간 차트 풀세트 구현.
-- 분봉/일/주/월/년 토글 UI (`StockDetailScreen`)
-- 라인 → 캔들스틱 차트 (Canvas, 한국 관례 상승 빨강/하락 파랑)
-- WS 틱이 마지막 캔들에 실시간 반영 (`ticks(ticker)` collect → close 갱신 + 분 경계 넘으면 새 봉 push)
-- 거래량 막대 (차트 하단), 이동평균선 5/20/60, 크로스헤어 (드래그 시점 OHLC/시간)
-- 5호가 실시간 갱신 (`H0STASP0` WebSocket TR 추가 구독)
-
-**그 다음 (Stage 16)**: 수동 매수/매도 통합.
+**바로 다음 (Stage 16)**: 수동 매수/매도 통합.
 - 한투 주문 API 4+4종 (`TTTC0802U`/`TTTC0801U`/`TTTC0803U`/`CTSC9215R` + 해외 `TTTT1002U`/`TTTT1006U`/`TTTT1004U`/`TTTS3018R`)
 - OrderEntity + DAO + Repository, AppDatabase v8→v9 마이그레이션
 - OrderEntryScreen / OrderConfirmScreen / OrdersScreen

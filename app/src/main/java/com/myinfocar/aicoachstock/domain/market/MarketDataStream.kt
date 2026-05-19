@@ -1,6 +1,7 @@
 package com.myinfocar.aicoachstock.domain.market
 
 import com.myinfocar.aicoachstock.domain.model.MarketTick
+import com.myinfocar.aicoachstock.domain.model.OrderBookSnapshot
 import com.myinfocar.aicoachstock.domain.model.SubscriptionTarget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +33,15 @@ interface MarketDataStream {
      * 미구독 종목 ticker 입력 시 emptyFlow + REST 폴백 트리거를 구현체가 처리.
      */
     fun ticks(ticker: String): Flow<MarketTick>
+
+    /**
+     * 종목별 실시간 5호가 Flow (Stage 15 신설).
+     *
+     * - 한투 TR `H0STASP0` 평문 프레임에서 파싱.
+     * - subscribe(targets)가 호가 TR도 함께 구독하므로 별도 hoga 구독 호출 불필요.
+     * - 미구독 종목 ticker 입력 시 emptyFlow.
+     */
+    fun books(ticker: String): Flow<OrderBookSnapshot>
 }
 
 enum class ConnectionState {

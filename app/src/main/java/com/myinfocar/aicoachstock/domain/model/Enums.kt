@@ -41,3 +41,6 @@ enum class SubscriptionReason { ACTIVE_ALERT, OPEN_POSITION, WATCHLIST }
 
 /** 시세 데이터 출처. */
 enum class TickSource { WS_LIVE, REST_FALLBACK, CLOSED_PRICE }
+
+/** StockDetailScreen 차트 영역 표시 모드 (Stage 15: 사용자가 토글). */
+enum class ChartType { LINE, CANDLE }
