@@ -6,6 +6,7 @@ import com.myinfocar.aicoachstock.data.local.db.alert.PriceAlertDao
 import com.myinfocar.aicoachstock.data.local.db.coach.CoachMessageDao
 import com.myinfocar.aicoachstock.data.local.db.coach.CoachSessionDao
 import com.myinfocar.aicoachstock.data.local.db.entry.EntryChecklistDao
+import com.myinfocar.aicoachstock.data.local.db.order.OrderDao
 import com.myinfocar.aicoachstock.data.local.db.principle.PrincipleDao
 import com.myinfocar.aicoachstock.data.local.db.reflection.TradeReflectionDao
 import com.myinfocar.aicoachstock.data.local.db.stock.StockDao
@@ -68,6 +69,9 @@ object DatabaseModule {
 
     @Provides
     fun providePriceAlertDao(db: AppDatabase): PriceAlertDao = db.priceAlertDao()
+
+    @Provides
+    fun provideOrderDao(db: AppDatabase): OrderDao = db.orderDao()
 
     private const val DB_NAME = "aicoachstock.db"
 }

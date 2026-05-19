@@ -11,6 +11,8 @@ import com.myinfocar.aicoachstock.data.local.db.coach.CoachSessionDao
 import com.myinfocar.aicoachstock.data.local.db.coach.CoachSessionEntity
 import com.myinfocar.aicoachstock.data.local.db.entry.EntryChecklistDao
 import com.myinfocar.aicoachstock.data.local.db.entry.EntryChecklistEntity
+import com.myinfocar.aicoachstock.data.local.db.order.OrderDao
+import com.myinfocar.aicoachstock.data.local.db.order.OrderEntity
 import com.myinfocar.aicoachstock.data.local.db.principle.PrincipleDao
 import com.myinfocar.aicoachstock.data.local.db.principle.PrincipleEntity
 import com.myinfocar.aicoachstock.data.local.db.reflection.TradeReflectionDao
@@ -39,8 +41,9 @@ import com.myinfocar.aicoachstock.data.local.db.watchlist.WatchListEntity
         CoachMessageEntity::class,
         EntryChecklistEntity::class,
         PriceAlertEntity::class,
+        OrderEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 @TypeConverters(AppTypeConverters::class)
@@ -54,4 +57,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun coachMessageDao(): CoachMessageDao
     abstract fun entryChecklistDao(): EntryChecklistDao
     abstract fun priceAlertDao(): PriceAlertDao
+    abstract fun orderDao(): OrderDao
 }

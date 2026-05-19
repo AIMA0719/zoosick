@@ -2,6 +2,7 @@ package com.myinfocar.aicoachstock.data.repository
 
 import com.myinfocar.aicoachstock.domain.repository.CoachRepository
 import com.myinfocar.aicoachstock.domain.repository.EntryChecklistRepository
+import com.myinfocar.aicoachstock.domain.repository.OrderRepository
 import com.myinfocar.aicoachstock.domain.repository.PriceAlertRepository
 import com.myinfocar.aicoachstock.domain.repository.StockRepository
 import com.myinfocar.aicoachstock.domain.repository.TradeReflectionRepository
@@ -65,4 +66,10 @@ abstract class RepositoryModule {
     abstract fun bindPriceAlertRepository(
         impl: PriceAlertRepositoryImpl,
     ): PriceAlertRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindOrderRepository(
+        impl: OrderRepositoryImpl,
+    ): OrderRepository
 }

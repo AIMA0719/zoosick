@@ -44,3 +44,14 @@ enum class TickSource { WS_LIVE, REST_FALLBACK, CLOSED_PRICE }
 
 /** StockDetailScreen 차트 영역 표시 모드 (Stage 15: 사용자가 토글). */
 enum class ChartType { LINE, CANDLE }
+
+/** 주문 종류 (Stage 16). LIMIT=지정가(가격 필수), MARKET=시장가(가격 무시). */
+enum class OrderType { LIMIT, MARKET }
+
+/**
+ * 주문 상태 전이 (Stage 16):
+ *  PENDING(UI 입력 완료, 송신 전) → SUBMITTED(한투 응답 정상)
+ *    → FILLED / PARTIAL / CANCELED / REJECTED
+ *  PENDING → REJECTED (송신 실패 시)
+ */
+enum class OrderStatus { PENDING, SUBMITTED, FILLED, PARTIAL, CANCELED, REJECTED }

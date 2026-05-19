@@ -2,11 +2,20 @@ package com.myinfocar.aicoachstock.data.remote.kis.market
 
 import com.myinfocar.aicoachstock.data.remote.kis.dto.BalanceResponse
 import com.myinfocar.aicoachstock.data.remote.kis.dto.DailyCcldResponse
+import com.myinfocar.aicoachstock.data.remote.kis.dto.DomesticOpenOrdersResponse
+import com.myinfocar.aicoachstock.data.remote.kis.dto.DomesticOrderCashRequest
+import com.myinfocar.aicoachstock.data.remote.kis.dto.DomesticOrderRevisionRequest
+import com.myinfocar.aicoachstock.data.remote.kis.dto.OrderResponse
 import com.myinfocar.aicoachstock.data.remote.kis.dto.OverseasBalanceResponse
 import com.myinfocar.aicoachstock.data.remote.kis.dto.OverseasCcnlResponse
+import com.myinfocar.aicoachstock.data.remote.kis.dto.OverseasOpenOrdersResponse
+import com.myinfocar.aicoachstock.data.remote.kis.dto.OverseasOrderRequest
+import com.myinfocar.aicoachstock.data.remote.kis.dto.OverseasOrderRevisionRequest
 import com.myinfocar.aicoachstock.data.remote.kis.dto.PeriodProfitResponse
+import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
+import retrofit2.http.POST
 import retrofit2.http.Query
 import retrofit2.http.Url
 
@@ -105,6 +114,124 @@ interface KisTradingApi {
         @Query("CTX_AREA_FK200") ctxFk200: String = "",
         @Query("CTX_AREA_NK200") ctxNk200: String = "",
     ): OverseasBalanceResponse
+
+    /* ─────────────────────────────────────────────────────────────
+     * 주문 API (Stage 16 신설). 자동 발주 금지 — OrderService에서 BiometricPrompt 게이트 후에만 호출.
+     * ───────────────────────────────────────────────────────────── */
+
+    /** 국내 주식 현금 매수. TR_ID: TTTC0802U (실전 전용). */
+    @POST
+    suspend fun placeDomesticBuy(
+        @Url url: String,
+        @Header("authorization") authorization: String,
+        @Header("appkey") appKey: String,
+        @Header("appsecret") appSecret: String,
+        @Header("tr_id") trId: String = "TTTC0802U",
+        @Header("custtype") custType: String = "P",
+        @Header("hashkey") hashKey: String? = null,
+        @Body body: DomesticOrderCashRequest,
+    ): OrderResponse
+
+    /** 국내 주식 현금 매도. TR_ID: TTTC0801U. */
+    @POST
+    suspend fun placeDomesticSell(
+        @Url url: String,
+        @Header("authorization") authorization: String,
+        @Header("appkey") appKey: String,
+        @Header("appsecret") appSecret: String,
+        @Header("tr_id") trId: String = "TTTC0801U",
+        @Header("custtype") custType: String = "P",
+        @Header("hashkey") hashKey: String? = null,
+        @Body body: DomesticOrderCashRequest,
+    ): OrderResponse
+
+    /** 국내 주문 정정·취소. TR_ID: TTTC0803U. */
+    @POST
+    suspend fun reviseDomesticOrder(
+        @Url url: String,
+        @Header("authorization") authorization: String,
+        @Header("appkey") appKey: String,
+        @Header("appsecret") appSecret: String,
+        @Header("tr_id") trId: String = "TTTC0803U",
+        @Header("custtype") custType: String = "P",
+        @Header("hashkey") hashKey: String? = null,
+        @Body body: DomesticOrderRevisionRequest,
+    ): OrderResponse
+
+    /** 국내 미체결 조회. TR_ID: TTTC8036R. */
+    @GET
+    suspend fun fetchDomesticOpenOrders(
+        @Url url: String,
+        @Header("authorization") authorization: String,
+        @Header("appkey") appKey: String,
+        @Header("appsecret") appSecret: String,
+        @Header("tr_id") trId: String = "TTTC8036R",
+        @Header("tr_cont") trCont: String = "",
+        @Header("custtype") custType: String = "P",
+        @Query("CANO") accountNo: String,
+        @Query("ACNT_PRDT_CD") productCode: String,
+        @Query("CTX_AREA_FK100") ctxFk100: String = "",
+        @Query("CTX_AREA_NK100") ctxNk100: String = "",
+        @Query("INQR_DVSN_1") inqrDvsn1: String = "0",
+        @Query("INQR_DVSN_2") inqrDvsn2: String = "0",
+    ): DomesticOpenOrdersResponse
+
+    /** 해외 매수. TR_ID: TTTT1002U (USD). */
+    @POST
+    suspend fun placeOverseasBuy(
+        @Url url: String,
+        @Header("authorization") authorization: String,
+        @Header("appkey") appKey: String,
+        @Header("appsecret") appSecret: String,
+        @Header("tr_id") trId: String = "TTTT1002U",
+        @Header("custtype") custType: String = "P",
+        @Header("hashkey") hashKey: String? = null,
+        @Body body: OverseasOrderRequest,
+    ): OrderResponse
+
+    /** 해외 매도. TR_ID: TTTT1006U. */
+    @POST
+    suspend fun placeOverseasSell(
+        @Url url: String,
+        @Header("authorization") authorization: String,
+        @Header("appkey") appKey: String,
+        @Header("appsecret") appSecret: String,
+        @Header("tr_id") trId: String = "TTTT1006U",
+        @Header("custtype") custType: String = "P",
+        @Header("hashkey") hashKey: String? = null,
+        @Body body: OverseasOrderRequest,
+    ): OrderResponse
+
+    /** 해외 주문 정정·취소. TR_ID: TTTT1004U. */
+    @POST
+    suspend fun reviseOverseasOrder(
+        @Url url: String,
+        @Header("authorization") authorization: String,
+        @Header("appkey") appKey: String,
+        @Header("appsecret") appSecret: String,
+        @Header("tr_id") trId: String = "TTTT1004U",
+        @Header("custtype") custType: String = "P",
+        @Header("hashkey") hashKey: String? = null,
+        @Body body: OverseasOrderRevisionRequest,
+    ): OrderResponse
+
+    /** 해외 미체결 조회. TR_ID: TTTS3018R. */
+    @GET
+    suspend fun fetchOverseasOpenOrders(
+        @Url url: String,
+        @Header("authorization") authorization: String,
+        @Header("appkey") appKey: String,
+        @Header("appsecret") appSecret: String,
+        @Header("tr_id") trId: String = "TTTS3018R",
+        @Header("tr_cont") trCont: String = "",
+        @Header("custtype") custType: String = "P",
+        @Query("CANO") accountNo: String,
+        @Query("ACNT_PRDT_CD") productCode: String,
+        @Query("OVRS_EXCG_CD") ovrsExcgCd: String = "%",
+        @Query("SORT_SQN") sortSqn: String = "DS",
+        @Query("CTX_AREA_FK200") ctxFk200: String = "",
+        @Query("CTX_AREA_NK200") ctxNk200: String = "",
+    ): OverseasOpenOrdersResponse
 
     /** 해외주식 주문체결내역. TR_ID: TTTS3035R / VTTS3035R */
     @GET

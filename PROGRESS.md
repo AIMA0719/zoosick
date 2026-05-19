@@ -2,7 +2,7 @@
 
 > **다음 작업 시 이 파일 먼저 읽고 시작.** PRD는 `docs/AICoachStock-PRD/` 안에 5개.
 
-마지막 업데이트: 2026-05-19 (Stage 15: 실시간 차트 토스 풀세트 — Stage 16 수동 주문 대기)
+마지막 업데이트: 2026-05-19 (Stage 16-1: 한투 주문 API 통합 — UI/보안 대기)
 
 ---
 
@@ -387,6 +387,51 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase
 
 ✅ `./gradlew.bat assembleDebug` BUILD SUCCESSFUL (23s)
 
+### Phase 1 Stage 16-1: 한투 주문 API 통합 (API/DB/Service 레이어) ✨ NEW
+Stage 14 PRD 개정으로 "사용자 명시 확인 수동 주문 허용"이 정책화된 다음, 실제 한투 주문 API를 통합하고 DB·도메인 서비스 레이어까지 완성. UI(OrderEntryScreen 등)는 Stage 16-2, 보안 강화(BiometricPrompt UI 통합)는 Stage 16-3에서.
+
+**도메인 모델 + Enum**:
+- `domain/model/Enums.kt` — OrderType { LIMIT, MARKET }, OrderStatus { PENDING / SUBMITTED / FILLED / PARTIAL / CANCELED / REJECTED } 추가.
+- `domain/model/Order.kt` 신규 — id/ticker/market/side/orderType/qty/price/filledQty/avgFillPrice/status/krxOrderNo/krxOrderOrgNo/originOrderNo(자기참조)/linkedPrincipleIds(JSON)/createdAt/submittedAt/completedAt/errorMessage/rawMsgCd. isTerminal 헬퍼.
+
+**Room (AppDatabase v8 → v9, destructive 유지)**:
+- `data/local/db/order/OrderEntity.kt` 신규 — 동일 필드 평면. indices ticker/status/krxOrderNo.
+- `OrderDao.kt` 신규 — observeAll/observeByTicker/findByStatuses/findById/findByKrxOrderNo/upsert/deleteById.
+- `OrderMapper.kt` 신규 — toDomain/toEntity, linkedPrincipleIdsJson은 kotlinx.serialization JSON으로 인코딩/디코딩.
+- `AppDatabase.kt` — entities에 OrderEntity 추가, version 9, orderDao() abstract 추가.
+- `DatabaseModule.kt` — provideOrderDao.
+- 사용자 안내: "지금 사용자 배포 안 함" 결정에 따라 Migration 작성 없이 fallbackToDestructiveMigration 유지.
+
+**Repository 레이어**:
+- `domain/repository/OrderRepository.kt` 신규 — observeAll/observeByTicker/findOpen/findById/findByKrxOrderNo/upsert/updateStatus/deleteById.
+- `data/repository/OrderRepositoryImpl.kt` 신규 — DAO 위임 + Flow.map 도메인 변환. updateStatus는 terminal(FILLED/CANCELED/REJECTED) 도달 시 completedAt 자동 세팅.
+- `RepositoryModule.kt` — bindOrderRepository.
+
+**한투 주문 API (KisTradingApi 확장, 신규 8종 POST/GET)**:
+- 국내 매수 `placeDomesticBuy` (`TTTC0802U`) · 매도 `placeDomesticSell` (`TTTC0801U`) · 정정·취소 `reviseDomesticOrder` (`TTTC0803U`).
+- 국내 미체결 `fetchDomesticOpenOrders` (`TTTC8036R`).
+- 해외 매수 `placeOverseasBuy` (`TTTT1002U`) · 매도 `placeOverseasSell` (`TTTT1006U`) · 정정·취소 `reviseOverseasOrder` (`TTTT1004U`).
+- 해외 미체결 `fetchOverseasOpenOrders` (`TTTS3018R`).
+- POST 본문은 `data/remote/kis/dto/OrderDtos.kt` 신규에 정의 — `DomesticOrderCashRequest` (CANO/ACNT_PRDT_CD/PDNO/ORD_DVSN/ORD_QTY/ORD_UNPR), `DomesticOrderRevisionRequest` (KRX_FWDG_ORD_ORGNO/ORGN_ODNO/RVSE_CNCL_DVSN_CD/QTY_ALL_ORD_YN), `OverseasOrderRequest`(OVRS_EXCG_CD/OVRS_ORD_UNPR), `OverseasOrderRevisionRequest`. 응답은 `OrderResponse`(rt_cd/msg_cd/msg1) + `OrderResponseOutput`(KRX_FWDG_ORD_ORGNO/ODNO/ORD_TMD). 미체결은 `DomesticOpenOrdersResponse`/`OverseasOpenOrdersResponse` 각각.
+- 한투 실전 주문에 필요한 hashkey 헤더는 선택적(`Header("hashkey") hashKey: String? = null`)으로 둠 — 운영에서 거부 시 별도 hashkey 발급 API 추가.
+
+**OrderService 도메인 (`domain/order/`)**:
+- `OrderIntent.kt` 신규 — sealed class Place/Revise/Cancel + 일회용 `OrderConfirmation(sourceFlow)` (BiometricPrompt 통과 영수증, UI에서 인증 성공 시 생성).
+- `OrderService.kt` 신규 — 핵심 책임:
+  - **placeOrder(intent: OrderIntent): Result<Order>** — sendMutex.withLock로 동시 송신 차단(빠른 더블탭·복귀 시 이중 송신 방지). PENDING Order 영구 기록 → credentials/token 확보 → KIS API 호출 → 응답에 따라 SUBMITTED(ODNO/KRX_FWDG_ORD_ORGNO 채움) 또는 REJECTED(에러 메시지 영구 기록) 분기.
+  - **dispatchPlace/Revise/Cancel** — Market(KR/US)별로 적절한 한투 API 함수 + DTO 매핑. KR 시장가 = ORD_DVSN "01", US 시장가 = "31".
+  - **pollExecution(orderId)** — 5초 간격 30초 timeout. checkExecution이 미체결 응답에서 ODNO 못 찾으면 FILLED 추정, 찾으면 totCcldQty로 PARTIAL/SUBMITTED 판정.
+  - **mapKisError(msgCd, msg1)** — PRD에 명문화한 한국어 매핑. APBK0556=잔고부족, APBK0918/0919=호가단위 오류, APBK0013=장 종료, APBK0571/0908=거래정지, APBK0666=수량초과, APBK0017=가격범위, APBK0024=동시주문한도. 미매핑은 "주문 실패 (msg_cd=…)" 형식으로 raw msg1 노출 차단.
+
+**Stage 16-1 OOS**:
+- BiometricPrompt UI 게이트(Phase D에서). OrderConfirmation은 인터페이스만 정의 — 실제 인증 통과 검증 로직은 UI 측 BiometricAuth helper와 연동 예정.
+- OrderEntryScreen / OrderConfirmScreen / OrdersScreen (Phase D).
+- 미체결 → Trade 자동 import는 기존 Stage 9 TradeImportService가 담당. OrderService.pollExecution은 Order 상태 갱신만, Trade 생성은 별도.
+- 한투 hashkey 헤더 발급 — 운영에서 hashkey 강제 응답 받으면 KisAuthService에 hashkey 함수 추가.
+- US 거래소 코드 자동 결정(NASD/NYSE/AMEX) — 현재는 호출자가 OrderIntent.excgCode로 명시. 종목 메타 기반 자동화는 다음 보강.
+
+✅ `./gradlew.bat assembleDebug` BUILD SUCCESSFUL (26s)
+
 ### UI Stage A+B: 토스 증권 톤 개편 ✨ NEW (worktree: `ui-toss-overhaul`)
 사용자 요청: "토스 증권 앱처럼 일괄 개편" + "클릭 이펙트/화면 전환 애니메이션" + "관심 종목 카드에 현재가 표시 + 클릭 시 상세".
 
@@ -435,11 +480,16 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase
 
 ## 🚧 진행 중 / 다음 시작점
 
-**바로 다음 (Stage 16)**: 수동 매수/매도 통합.
-- 한투 주문 API 4+4종 (`TTTC0802U`/`TTTC0801U`/`TTTC0803U`/`CTSC9215R` + 해외 `TTTT1002U`/`TTTT1006U`/`TTTT1004U`/`TTTS3018R`)
-- OrderEntity + DAO + Repository, AppDatabase v8→v9 마이그레이션
-- OrderEntryScreen / OrderConfirmScreen / OrdersScreen
-- BiometricPrompt 게이트, IN_FLIGHT 가드, 미체결 5초 polling
+**바로 다음 (Stage 16-2 = Phase D)**: 매수/매도 UI.
+- `StockDetailScreen` 하단 매수/매도 BottomBar (한국 관례 매수=빨강, 매도=파랑)
+- `OrderEntryScreen` — 수량·가격(지정가/시장가)·잔고·예상금액·수수료
+- `OrderConfirmScreen` — 한 번 더 확인 단계
+- `OrdersScreen` — 미체결/체결 내역, 정정·취소
+
+**그 다음 (Stage 16-3 = Phase E)**: 보안 + 안정성.
+- `BiometricPrompt` 게이트 (매 주문 직전 강제) — OrderConfirmation 발급
+- 주문 송신 후 `OrderService.pollExecution` 호출 흐름 통합
+- 호가 단위(가격대별 1/5/10/50/100/500/1000원) 자동 보정 헬퍼
 
 **병행**: Phase 1 전체 실기기 검증 (`installDebug` → 원칙 등록 → 매매 입력 → 복기/채팅/체크리스트/검색/알림/리서치/BG 다운로드/체결 자동 import).
 
