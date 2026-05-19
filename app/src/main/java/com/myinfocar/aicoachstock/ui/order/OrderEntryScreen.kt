@@ -40,6 +40,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.myinfocar.aicoachstock.domain.account.AccountService
 import com.myinfocar.aicoachstock.domain.market.MarketDataSource
 import com.myinfocar.aicoachstock.domain.model.Market
 import com.myinfocar.aicoachstock.domain.model.Order
@@ -48,6 +49,7 @@ import com.myinfocar.aicoachstock.domain.model.TradeSide
 import com.myinfocar.aicoachstock.domain.order.OrderConfirmation
 import com.myinfocar.aicoachstock.domain.order.OrderIntent
 import com.myinfocar.aicoachstock.domain.order.OrderService
+import com.myinfocar.aicoachstock.domain.order.PriceTickRules
 import com.myinfocar.aicoachstock.domain.repository.StockRepository
 import com.myinfocar.aicoachstock.ui.common.AppCard
 import com.myinfocar.aicoachstock.ui.common.KrDownBlue
@@ -74,14 +76,31 @@ data class OrderEntryUiState(
     val submitting: Boolean = false,
     val errorMessage: String? = null,
     val submittedOrder: Order? = null,
+    // Stage 16-3 추가
+    val cashDeposit: Double? = null,
+    val holdingQty: Int = 0,
+    val holdingAvgPrice: Double? = null,
 ) {
     val quantity: Int? get() = quantityText.toIntOrNull()?.takeIf { it > 0 }
     val price: Double? get() = priceText.toDoubleOrNull()?.takeIf { it > 0 }
+
+    /** 입력 가격을 호가 단위에 맞춘 값. LIMIT일 때만 의미 있음. */
+    val snappedPrice: Double? get() = price?.let { PriceTickRules.snap(market, it) }
+
+    val priceNeedsSnap: Boolean
+        get() {
+            val p = price ?: return false
+            val s = snappedPrice ?: return false
+            return kotlin.math.abs(p - s) > 0.0001
+        }
+
+    val tickSize: Double get() = currentPrice?.let { PriceTickRules.tickFor(market, it) } ?: PriceTickRules.tickFor(market, 0.0)
+
     val expectedTotal: Double?
         get() {
             val q = quantity ?: return null
             val p = when (orderType) {
-                OrderType.LIMIT -> price ?: return null
+                OrderType.LIMIT -> snappedPrice ?: return null
                 OrderType.MARKET -> currentPrice ?: return null
             }
             return q * p
@@ -89,6 +108,20 @@ data class OrderEntryUiState(
     val canSubmit: Boolean
         get() = !submitting && quantity != null &&
                 (orderType == OrderType.MARKET || price != null)
+
+    /** 매수: 예상금액이 예수금을 초과하나? 매도: 수량이 보유 수량을 초과하나? null이면 정보 부족. */
+    val insufficientWarning: String?
+        get() {
+            if (side == TradeSide.BUY) {
+                val total = expectedTotal ?: return null
+                val cash = cashDeposit ?: return null
+                if (total > cash) return "예수금 초과 — 주문 가능 금액 확인 필요"
+            } else {
+                val q = quantity ?: return null
+                if (q > holdingQty) return "보유 수량 초과 (보유 ${holdingQty}주)"
+            }
+            return null
+        }
 }
 
 @HiltViewModel
@@ -97,6 +130,7 @@ class OrderEntryViewModel @Inject constructor(
     private val stockRepo: StockRepository,
     private val marketDataSource: MarketDataSource,
     private val orderService: OrderService,
+    private val accountService: AccountService,
 ) : ViewModel() {
 
     private val argTicker: String = checkNotNull(savedStateHandle["ticker"]) { "ticker 인자 없음" }
@@ -118,6 +152,20 @@ class OrderEntryViewModel @Inject constructor(
                     nameKo = stock?.nameKo,
                     currentPrice = tick?.price,
                     priceText = tick?.price?.let { p -> formatInputPrice(p, market) } ?: "",
+                )
+            }
+            // 잔고/예수금 — KR/US 분리.
+            val balance = when (market) {
+                Market.KR -> accountService.fetchKrBalance().getOrNull()
+                Market.US -> accountService.fetchUsBalance().getOrNull()
+            }
+            val cash = balance?.second?.cashDeposit
+            val holding = balance?.first?.firstOrNull { it.ticker == argTicker }
+            _ui.update {
+                it.copy(
+                    cashDeposit = cash,
+                    holdingQty = holding?.qty ?: 0,
+                    holdingAvgPrice = holding?.avgBuyPrice,
                 )
             }
         }
@@ -143,8 +191,9 @@ class OrderEntryViewModel @Inject constructor(
         val st = _ui.value
         if (!st.canSubmit) return
         val qty = st.quantity ?: return
+        // 호가 단위에 맞춰 보정한 가격으로 송신 (한투 APBK0918 방지).
         val pricePayload: Double? = when (st.orderType) {
-            OrderType.LIMIT -> st.price ?: return
+            OrderType.LIMIT -> st.snappedPrice ?: return
             OrderType.MARKET -> null
         }
         _ui.update { it.copy(submitting = true, errorMessage = null) }
@@ -240,6 +289,31 @@ fun OrderEntryScreen(
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                     )
+                    Text(
+                        "호가 단위 ${formatTick(state.tickSize, state.market)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            AppCard(padding = AppTokens.space16) {
+                Column(verticalArrangement = Arrangement.spacedBy(AppTokens.space4)) {
+                    if (state.side == TradeSide.BUY) {
+                        Text("주문 가능 예수금", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            state.cashDeposit?.let { formatPrice(it, state.market) } ?: "조회 중 ...",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    } else {
+                        Text("보유 정보", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "${state.holdingQty}주" + (state.holdingAvgPrice?.takeIf { it > 0 }?.let { "  ·  평균 ${formatPrice(it, state.market)}" } ?: ""),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
 
@@ -266,6 +340,15 @@ fun OrderEntryScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    if (state.orderType == OrderType.LIMIT && state.priceNeedsSnap) {
+                        state.snappedPrice?.let { snapped ->
+                            Text(
+                                "→ 호가 단위 보정: ${formatPrice(snapped, state.market)}로 송신",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = state.quantityText,
                         onValueChange = viewModel::onQuantityChange,
@@ -278,6 +361,13 @@ fun OrderEntryScreen(
                             "예상 금액 ${formatPrice(total, state.market)}",
                             style = MaterialTheme.typography.titleMedium,
                             color = sideColor,
+                        )
+                    }
+                    state.insufficientWarning?.let { warn ->
+                        Text(
+                            "⚠️ $warn",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
                         )
                     }
                     Text(
@@ -334,4 +424,9 @@ fun OrderEntryScreen(
 private fun formatPrice(value: Double, market: Market): String = when (market) {
     Market.KR -> "%,d원".format(value.toLong())
     Market.US -> "$${"%,.2f".format(value)}"
+}
+
+private fun formatTick(value: Double, market: Market): String = when (market) {
+    Market.KR -> "%,d원".format(value.toLong())
+    Market.US -> "$${"%.2f".format(value)}"
 }
