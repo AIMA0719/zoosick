@@ -21,6 +21,8 @@
 - [ ] **한투 OpenAPI WebSocket 실시간 시세** — `approval_key` 발급, 국내(H0STCNT0)·해외(HDFSCNT0) 구독, 자동 재연결·재구독, 41종목 우선순위 큐
 - [ ] 한투 REST 폴백 — 비장시간 종가, WebSocket 장애 시
 - [ ] 손절/익절 알림 (PriceAlert + Foreground Service로 WebSocket 유지 + tick 단위 감지)
+- [ ] **실시간 차트 풀세트 (Stage 15)** — 캔들스틱 + 분봉/일/주/월/년 토글 + WS 틱이 마지막 캔들에 실시간 반영 + 거래량 막대 + 이동평균선 5·20·60 + 크로스헤어 + 실시간 5호가(H0STASP0)
+- [ ] **수동 매수/매도 (Stage 16, PRD 개정 후)** — 한투 주문 API(`TTTC0802U` 등 국내 + `TTTT1002U` 등 해외), 매 건 생체 인증, 미체결 polling, 정정·취소, OrdersScreen
 - [ ] **Gemma 4 E4B 모델 자동 다운로드 (~3GB)** — 첫 실행 시 Wi-Fi 권장, 진행률·일시정지·재개·SHA-256 검증·재시도
 - [ ] Gemma 4 E4B 모델 로드 (MediaPipe LLM Inference API)
 - [ ] Room + SQLCipher 암호화 저장
@@ -32,6 +34,7 @@
 - Trade / TradeReflection
 - EntryChecklist
 - PriceAlert
+- Order (Stage 14 신설)
 - CoachSession / CoachMessage
 - MarketQuoteCache
 - ApiCredential (별도)
@@ -55,6 +58,8 @@
 3. **한투 OpenAPI 토큰 + approval_key 갱신** — Access Token 만료 시 자동 재발급, WebSocket용 approval_key 별도 발급·갱신.
 4. **WebSocket 안정 운영** — 자동 재연결(지수 백오프), heartbeat, 재구독 큐, 41종목 한도 우선순위, Android 14+ Foreground Service(`dataSync`) 타입.
 5. **컨텍스트 길이 관리** — E4B 입력 토큰 한도 안에서 원칙 + 관련 매매 N건을 RAG로 주입하는 전략.
+6. **WebSocket 틱 → 차트 마지막 캔들 실시간 반영 (Stage 15)** — 분/일 경계 넘으면 새 봉 push, 누적 거래량 단순 합산이 아니라 H0STCNT0의 누적 거래량(cum_vol) 차분으로 계산. UI 60fps 유지하려면 throttle 필수.
+7. **주문 멱등성 + 미체결 polling (Stage 16)** — 빠른 더블탭 / 네트워크 재시도 / 앱 복귀 시 이중 송신 차단. Mutex + IN_FLIGHT 상태 + 한투 ODNO 응답 도착 전 SUBMITTED 가드. 미체결 5초 polling 30초 timeout 후 사용자가 OrdersScreen에서 수동 갱신.
 
 ### Phase 1 시작 프롬프트 (AI에게 코드 시킬 때 복사)
 ```
@@ -73,6 +78,8 @@ Phase 1 범위:
 - 종목 리서치 Q&A
 - 한투 OpenAPI 시세 (국내+해외)
 - 손절/익절 알림 (Foreground Service)
+- 실시간 차트 풀세트 (Stage 15: 캔들 + 분봉 토글 + WS 틱 반영 + 호가 실시간)
+- 수동 매수/매도 (Stage 16: 한투 주문 API + 생체 인증, 자동 발주 금지)
 
 반드시 지켜야 할 것:
 - 04_PROJECT_SPEC.md의 "절대 하지 마" 목록 준수

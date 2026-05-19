@@ -15,13 +15,18 @@ TradingPrinciple (내 매매 원칙)
 EntryChecklist (진입 체크) ----+
                                 |
 WatchList ---1:N---> Stock      |
+                       ^        |
                        |        |
-                       v        |
-                     Trade <----+
-                       |
-                       +---1:1---> TradeReflection (AI 복기)
-                       |
-                       +---1:N---> PriceAlert (손절/익절)
+              Order ---+      Trade <----+
+                       |        ^
+                       |        |
+                       +---1:N--+   (체결 시마다 Trade 생성)
+                                |
+                       Trade ---+
+                         |
+                         +---1:1---> TradeReflection (AI 복기)
+                         |
+                         +---1:N---> PriceAlert (손절/익절)
 
 CoachSession ---1:N---> CoachMessage
                             |
@@ -138,6 +143,37 @@ Trade 1건당 1개. Gemma 4 E4B 생성.
 | ai_message | 발동 시 AI 코멘트 | "원칙대로 손절 검토. 감정 매매 주의." | X |
 | created_at | 생성일 | 2026-05-13 | O |
 
+### Order (주문, Stage 14 PRD 개정으로 신설)
+사용자가 한투 OpenAPI로 직접 송신한 매수/매도 주문. 자동 발주 금지, 매 건 BiometricPrompt 게이트.
+
+| 필드 | 설명 | 예시 | 필수 |
+|------|------|------|------|
+| id | 고유 식별자 (UUID) | uuid-order | O |
+| ticker | Stock 참조 | "005930" / "AAPL" | O |
+| market | 시장 구분 | KR / US | O |
+| side | 매수/매도 | BUY / SELL | O |
+| order_type | 주문 종류 | LIMIT / MARKET | O |
+| qty | 주문 수량 | 10 | O |
+| price | 지정가 (MARKET일 때 null) | 72500 | X |
+| filled_qty | 체결된 수량 | 7 | O |
+| avg_fill_price | 평균 체결가 | 72450 | X |
+| status | 주문 상태 | PENDING / SUBMITTED / FILLED / PARTIAL / CANCELED / REJECTED | O |
+| krx_order_no | 한투 응답 주문번호 (ODNO) | "0000123456" | X |
+| krx_order_org_no | 한투 응답 주문조직번호 (KRX_FWDG_ORD_ORGNO) | "00950" | X |
+| origin_order_no | 정정·취소 대상 원주문 ODNO (정정/취소 주문일 때) | "0000123450" | X |
+| linked_principle_ids | 진입 시 참고한 원칙 IDs (JSON, 선택) | `["p-3"]` | X |
+| created_at | 입력 시각 | 2026-05-19 10:23:00 | O |
+| submitted_at | 한투 송신 시각 | 2026-05-19 10:23:01 | X |
+| completed_at | 최종 상태 도달 시각 | 2026-05-19 10:23:15 | X |
+| error_message | 사용자용 한국어 메시지 (REJECTED 시) | "잔고 부족" | X |
+| raw_msg_cd | 한투 msg_cd 원본 (분석용) | "APBK0556" | X |
+
+**상태 전이**: `PENDING` (UI 입력 완료, 송신 전) → `SUBMITTED` (한투 응답 정상) → polling으로 `FILLED` / `PARTIAL` / `CANCELED` / `REJECTED`.
+
+**FK 정책**:
+- Order는 Stock의 ticker를 soft ref. Stock 마스터가 사라져도 주문 기록은 보존.
+- Trade와는 **자연 키로 연계**: Trade.externalOrderNo (이미 Stage 9에서 추가됨, 한투 ODNO 보관 컬럼) == Order.krx_order_no. 별도 FK 컬럼 신설 없이 재활용. 체결(FILLED/PARTIAL) polling 시 Trade upsert.
+
 ### CoachSession (코치 세션)
 대화 그룹. 종목별·일자별로 묶을 수 있음.
 
@@ -205,8 +241,10 @@ WebSocket 구독 중인 종목 목록 + 우선순위. 41종목 한도 관리.
 ## 관계 요약
 
 - **TradingPrinciple** N개 ← **EntryChecklist.answers**의 키로 참조 (soft FK)
-- **Stock** 1개 ← **WatchList / Trade / PriceAlert / MarketTickState / SubscriptionRegistry** N개 참조
+- **Stock** 1개 ← **WatchList / Trade / Order / PriceAlert / MarketTickState / SubscriptionRegistry** N개 참조
 - **Trade** 1개 ← **TradeReflection** 1개, **PriceAlert** N개
+- **Order** 1개 ↔ **Trade** N개 (체결 polling 시): `Trade.externalOrderNo` == `Order.krx_order_no` 자연 키 매칭
+- **Order** ↔ **Order** 자기 참조: 정정/취소 주문은 `origin_order_no`로 원주문 ODNO 참조
 - **CoachSession** 1개 ← **CoachMessage** N개
 - **CoachMessage.context_refs**는 **Trade / TradingPrinciple** IDs를 JSON 배열로 보관 (soft FK)
 

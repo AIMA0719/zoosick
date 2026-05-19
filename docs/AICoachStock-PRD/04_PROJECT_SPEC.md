@@ -187,7 +187,11 @@ sealed interface DownloadEvent {
 
 - [ ] 한투 App Key/Secret/Access Token을 **코드·리소스·로그에 하드코딩하지 마** — 무조건 EncryptedSharedPreferences
 - [ ] 매매 데이터·일지를 **평문 Room에 저장하지 마** — SQLCipher 필수, passphrase는 Android Keystore에 보관
-- [ ] **자동 주문(매수/매도) 코드를 작성하지 마** — Phase 1~3 전부 Out of Scope
+- [ ] **자동 발주(AI 추천 자동 실행 · 예약 · 반복 · 외부 트리거) 코드를 작성하지 마** — Phase 1~3 전부 Out of Scope. *단, Stage 14 PRD 개정 후*: 사용자가 매 건마다 생체 인증으로 명시 확인한 수동 매수/매도/정정/취소는 허용
+- [ ] **생체 인증(BiometricPrompt) 게이트 없이 주문 API를 호출하지 마** — 매수/매도/정정/취소 직전 강제, 실패·취소 시 주문 미실행
+- [ ] **주문을 IN_FLIGHT 가드 없이 보내지 마** — 빠른 더블탭·네트워크 재시도로 인한 이중 주문은 Mutex + 주문 상태로 차단
+- [ ] **체결 여부를 한투 응답 받기 전에 사용자에게 "체결됨"으로 표시하지 마** — 주문 송신 직후엔 SUBMITTED, 미체결 polling 후 FILLED/PARTIAL/CANCELED로 갱신
+- [ ] **한투 raw 에러 메시지(`msg1`)를 사용자 화면에 그대로 노출하지 마** — `msg_cd` → 한국어 사용자 메시지로 매핑
 - [ ] 사용자 매매 데이터·일지·원칙을 **외부 서버·외부 LLM(OpenAI/Anthropic/Gemini Cloud)으로 전송하지 마** — 온디바이스 추론 한정
 - [ ] **목업/하드코딩 응답으로 "완성"이라고 보고하지 마** — 실제 한투 API, 실제 Gemma 모델로 검증
 - [ ] AI 응답을 **투자 권유처럼 단정하지 마** — 모든 출력에 "최종 판단은 본인" 톤 유지
@@ -222,6 +226,11 @@ sealed interface DownloadEvent {
 - [ ] PR 단위로 **Room Migration** 작성. 스키마 바꿀 때마다 마이그레이션 테스트
 - [ ] Z Fold 7 **폴드/언폴드 두 화면 비율** 모두에서 레이아웃 확인 (Compose `BoxWithConstraints` 활용)
 - [ ] 폴링 주기·알림 정책은 **사용자 설정 화면**에서 조정 가능하게
+- [ ] 모든 매수/매도 주문은 **`OrderEntity`로 로컬 영구 기록**. 한투 `KRX_FWDG_ORD_ORGNO` / `ODNO` 응답 보관 → 미체결 조회·정정·취소 추적 가능
+- [ ] 주문 송신 직전 **`BiometricPrompt` 강제**. `Authenticators.BIOMETRIC_STRONG` 또는 `DEVICE_CREDENTIAL`. 인증 결과를 ViewModel에서 일회용 토큰으로 소비
+- [ ] 한투 주문 응답의 `msg_cd`/`msg1`을 **한국어 사용자 메시지로 매핑**. 잔고 부족 / 호가 단위 오류 / 거래정지 / 장 종료 / 토큰 만료 등 케이스별 분기
+- [ ] 주문 송신 직후 **미체결 조회(`CTSC9215R` / `TTTS3018R`) 5초 간격 30초 polling**. 그 사이 화면은 SUBMITTED 상태 + 진행 인디케이터로 표시
+- [ ] 주문 화면은 **잔고 + 예수금 + 호가 단위 + 예상 수수료를 사용자가 송신 전 확인**할 수 있게 표시. 한투 호가 단위 규칙(가격대별 1/5/10/50/100/500/1000원) 준수
 
 ---
 
@@ -277,7 +286,8 @@ sealed interface DownloadEvent {
 | KIS_ENV | PROD / VTS 토글 (실전 / 모의) | 사용자 선택 |
 | KIS_ACCESS_TOKEN | REST용 토큰 (앱 자동 발급) | `/oauth2/tokenP` 응답 |
 | KIS_APPROVAL_KEY | WebSocket 인증용 키 (앱 자동 발급) | `/oauth2/Approval` 응답 |
-| KIS_ACCOUNT_NO | (Phase 2 계좌조회 시) | 한투 계좌번호 |
+| KIS_ACCOUNT_NO | 계좌조회·주문 시 필수 (CANO 8자리) | 한투 계좌번호 |
+| KIS_PRODUCT_CODE | 상품코드 (ACNT_PRDT_CD, 보통 "01") | 사용자 입력 |
 | KEYSTORE_PASSWORD | 릴리즈 서명용 | 본인 생성 |
 | SQLCIPHER_PASSPHRASE_KEY_ALIAS | Keystore alias | 코드에서 자동 생성 |
 

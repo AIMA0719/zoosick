@@ -2,7 +2,7 @@
 
 > **다음 작업 시 이 파일 먼저 읽고 시작.** PRD는 `docs/AICoachStock-PRD/` 안에 5개.
 
-마지막 업데이트: 2026-05-14 (Phase 1 Stage 13: 종목 마스터 + 자연어 검색)
+마지막 업데이트: 2026-05-19 (Stage 14: 수동 주문 허용 PRD 개정 — Stage 15/16 진입 준비)
 
 ---
 
@@ -330,6 +330,19 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase
 - 기존 Principle/Trade/WatchList/Coach 화면의 우상단 ⚙️ 아이콘 모두 제거
 - SettingsScreen은 BottomTab 진입 시 navigationIcon(뒤로) 숨김 (`onBack: () -> Unit?` nullable)
 
+### Phase 1 Stage 14: 수동 주문 허용 PRD 개정 ✨ NEW
+사용자 요청: "토스 증권 앱처럼 실시간 차트 + 매수/매도 전부, 실제 API 연결" → 기존 PRD가 "자동 주문 코드 작성 금지"를 Phase 1~3 전체에 걸어둔 상태였음. **자동 발주만 금지로 좁히고 매 건 생체 인증을 거친 수동 주문은 허용**으로 개정.
+
+**개정된 PRD 문서 4종**:
+- `04_PROJECT_SPEC.md` — "절대 하지 마"에 자동 발주(AI/예약/반복/외부 트리거)만 금지 유지 + 생체 인증 미적용 / IN_FLIGHT 가드 미적용 / 한투 raw 에러 노출 / 송신 전 체결 표시 4건 신규 금지. "항상 해"에 OrderEntity 영구 로그 / BiometricPrompt 강제 / msg_cd 한국어 매핑 / 미체결 5초 polling 30초 timeout / 호가 단위 규칙 준수 5건 신규 추가. ENV 표에 KIS_PRODUCT_CODE 신규.
+- `01_PRD.md` — 차별점 표 "증권사 앱" 행을 "코치 + 매매 실행(수동·생체 인증) 통합"으로 갱신. 핵심 기능 표에 "실시간 차트 풀세트" / "실시간 5호가" / "수동 매수/매도/정정/취소" 3개 P1 신규. "안 만드는 것"의 "자동 주문" → "자동 발주(AI 자동/예약/반복/외부 트리거)"로 좁힘. 시나리오 5(수동 주문 + 생체 인증) 신규.
+- `02_DATA_MODEL.md` — Order 엔티티 신설(id/ticker/market/side/order_type/qty/price/filled_qty/avg_fill_price/status/krx_order_no/krx_order_org_no/origin_order_no/linked_principle_ids/created_at/submittedAt/completed_at/error_message/raw_msg_cd). 상태 전이 PENDING → SUBMITTED → FILLED/PARTIAL/CANCELED/REJECTED. Trade.externalOrderNo == Order.krx_order_no 자연 키로 연계(Stage 9 컬럼 재활용, 별도 FK 신설 없음). 정정/취소는 origin_order_no로 자기 참조.
+- `03_PHASES.md` — Phase 1 기능 목록에 Stage 15(실시간 차트) / Stage 16(수동 주문) 신규. 가장 까다로운 부분에 6번(WS 틱 → 캔들 반영, 누적 거래량 차분 계산) / 7번(주문 멱등성 + 미체결 polling) 추가.
+
+**다음 작업**:
+- Stage 15: 실시간 차트 풀세트 — `StockDetailScreen` + `KisWebSocketStream`(H0STASP0 호가 TR 추가 구독) + `KisStockInfoApi`(분봉 API는 이미 통합됨, UI 토글만)
+- Stage 16: 수동 주문 — 한투 주문 4종(국내) + 4종(해외) 통합, OrderEntity + DAO + Repository(AppDatabase v8→v9), `OrderEntryScreen` / `OrderConfirmScreen` / `OrdersScreen`, BiometricPrompt 게이트
+
 ### UI Stage A+B: 토스 증권 톤 개편 ✨ NEW (worktree: `ui-toss-overhaul`)
 사용자 요청: "토스 증권 앱처럼 일괄 개편" + "클릭 이펙트/화면 전환 애니메이션" + "관심 종목 카드에 현재가 표시 + 클릭 시 상세".
 
@@ -378,7 +391,20 @@ Android Z Fold 7 타깃 온디바이스 AI 주식 코치 앱. **PoC 4종 + Phase
 
 ## 🚧 진행 중 / 다음 시작점
 
-**바로 다음**: 사용자가 Phase 1 전체 실기기 검증 (`installDebug` → 원칙 등록 → 매매 입력 → 복기/채팅/체크리스트/검색/알림/리서치/BG 다운로드/체결 자동 import).
+**바로 다음 (Stage 15)**: 실시간 차트 풀세트 구현.
+- 분봉/일/주/월/년 토글 UI (`StockDetailScreen`)
+- 라인 → 캔들스틱 차트 (Canvas, 한국 관례 상승 빨강/하락 파랑)
+- WS 틱이 마지막 캔들에 실시간 반영 (`ticks(ticker)` collect → close 갱신 + 분 경계 넘으면 새 봉 push)
+- 거래량 막대 (차트 하단), 이동평균선 5/20/60, 크로스헤어 (드래그 시점 OHLC/시간)
+- 5호가 실시간 갱신 (`H0STASP0` WebSocket TR 추가 구독)
+
+**그 다음 (Stage 16)**: 수동 매수/매도 통합.
+- 한투 주문 API 4+4종 (`TTTC0802U`/`TTTC0801U`/`TTTC0803U`/`CTSC9215R` + 해외 `TTTT1002U`/`TTTT1006U`/`TTTT1004U`/`TTTS3018R`)
+- OrderEntity + DAO + Repository, AppDatabase v8→v9 마이그레이션
+- OrderEntryScreen / OrderConfirmScreen / OrdersScreen
+- BiometricPrompt 게이트, IN_FLIGHT 가드, 미체결 5초 polling
+
+**병행**: Phase 1 전체 실기기 검증 (`installDebug` → 원칙 등록 → 매매 입력 → 복기/채팅/체크리스트/검색/알림/리서치/BG 다운로드/체결 자동 import).
 
 회귀 검증 항목:
 1. Stage 1 (복기): 기존 동작 유지 확인
