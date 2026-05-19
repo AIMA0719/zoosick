@@ -406,7 +406,6 @@ class OrderService @Inject constructor(
         "APBK0666" -> "주문 수량 초과 — 보유 수량을 확인하세요"
         "APBK0017" -> "주문 가격 범위를 벗어났습니다"
         "APBK0024" -> "동일 종목 동시 주문 한도 초과"
-        "APBK0918" -> "호가 단위 오류"
         else -> "주문 실패 (msg_cd=${msgCd ?: "unknown"})"
     }
 

@@ -55,8 +55,11 @@ import com.myinfocar.aicoachstock.ui.common.AppCard
 import com.myinfocar.aicoachstock.ui.common.KrDownBlue
 import com.myinfocar.aicoachstock.ui.common.KrUpRed
 import com.myinfocar.aicoachstock.ui.common.PrimaryButton
+import com.myinfocar.aicoachstock.ui.common.formatPrice
 import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -145,28 +148,30 @@ class OrderEntryViewModel @Inject constructor(
         viewModelScope.launch {
             val stock = stockRepo.findByTicker(argTicker)
             val market = stock?.market ?: Market.KR
-            val tick = marketDataSource.fetchClosePrice(argTicker, market).getOrNull()
-            _ui.update {
-                it.copy(
-                    market = market,
-                    nameKo = stock?.nameKo,
-                    currentPrice = tick?.price,
-                    priceText = tick?.price?.let { p -> formatInputPrice(p, market) } ?: "",
-                )
-            }
-            // 잔고/예수금 — KR/US 분리.
-            val balance = when (market) {
-                Market.KR -> accountService.fetchKrBalance().getOrNull()
-                Market.US -> accountService.fetchUsBalance().getOrNull()
-            }
-            val cash = balance?.second?.cashDeposit
-            val holding = balance?.first?.firstOrNull { it.ticker == argTicker }
-            _ui.update {
-                it.copy(
-                    cashDeposit = cash,
-                    holdingQty = holding?.qty ?: 0,
-                    holdingAvgPrice = holding?.avgBuyPrice,
-                )
+
+            coroutineScope {
+                val tickDef = async { marketDataSource.fetchClosePrice(argTicker, market).getOrNull() }
+                val balanceDef = async {
+                    when (market) {
+                        Market.KR -> accountService.fetchKrBalance().getOrNull()
+                        Market.US -> accountService.fetchUsBalance().getOrNull()
+                    }
+                }
+                val tick = tickDef.await()
+                val balance = balanceDef.await()
+                val cash = balance?.second?.cashDeposit
+                val holding = balance?.first?.firstOrNull { it.ticker == argTicker }
+                _ui.update {
+                    it.copy(
+                        market = market,
+                        nameKo = stock?.nameKo,
+                        currentPrice = tick?.price,
+                        priceText = tick?.price?.let { p -> formatInputPrice(p, market) } ?: "",
+                        cashDeposit = cash,
+                        holdingQty = holding?.qty ?: 0,
+                        holdingAvgPrice = holding?.avgBuyPrice,
+                    )
+                }
             }
         }
     }
@@ -418,12 +423,6 @@ fun OrderEntryScreen(
             )
         }
     }
-}
-
-@Composable
-private fun formatPrice(value: Double, market: Market): String = when (market) {
-    Market.KR -> "%,d원".format(value.toLong())
-    Market.US -> "$${"%,.2f".format(value)}"
 }
 
 private fun formatTick(value: Double, market: Market): String = when (market) {

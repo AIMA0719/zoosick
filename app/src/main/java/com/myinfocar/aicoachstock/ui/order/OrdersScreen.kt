@@ -41,9 +41,11 @@ import com.myinfocar.aicoachstock.domain.order.OrderConfirmation
 import com.myinfocar.aicoachstock.domain.order.OrderIntent
 import com.myinfocar.aicoachstock.domain.order.OrderService
 import com.myinfocar.aicoachstock.domain.repository.OrderRepository
+import com.myinfocar.aicoachstock.domain.model.Market
 import com.myinfocar.aicoachstock.ui.common.AppCard
 import com.myinfocar.aicoachstock.ui.common.KrDownBlue
 import com.myinfocar.aicoachstock.ui.common.KrUpRed
+import com.myinfocar.aicoachstock.ui.common.formatPrice
 import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -194,12 +196,12 @@ private fun OrderCard(order: Order, onCancel: (() -> Unit)?) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "수량 ${order.qty}주" + (order.price?.let { "  /  가격 ${formatNumber(it, order.market.name)}" } ?: "  /  시장가"),
+                "수량 ${order.qty}주" + (order.price?.let { "  /  가격 ${formatPrice(it, order.market)}" } ?: "  /  시장가"),
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (order.filledQty > 0) {
                 Text(
-                    "체결 ${order.filledQty}주" + (order.avgFillPrice?.let { "  /  평균 ${formatNumber(it, order.market.name)}" } ?: ""),
+                    "체결 ${order.filledQty}주" + (order.avgFillPrice?.let { "  /  평균 ${formatPrice(it, order.market)}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -233,8 +235,3 @@ private fun StatusChip(status: OrderStatus) {
     Text(label, style = MaterialTheme.typography.labelMedium, color = color, fontWeight = FontWeight.Bold)
 }
 
-private fun formatNumber(value: Double, market: String): String = when (market) {
-    "KR" -> "%,d".format(value.toLong())
-    "US" -> "$${"%,.2f".format(value)}"
-    else -> value.toString()
-}

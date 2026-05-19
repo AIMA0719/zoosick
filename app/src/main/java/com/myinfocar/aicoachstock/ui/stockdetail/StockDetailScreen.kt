@@ -30,6 +30,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.myinfocar.aicoachstock.ui.common.AppCard
 import com.myinfocar.aicoachstock.ui.common.PrimaryButton
+import com.myinfocar.aicoachstock.ui.common.formatPrice
 import com.myinfocar.aicoachstock.ui.theme.AppTokens
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +74,8 @@ import com.myinfocar.aicoachstock.domain.model.Timeframe
 import com.myinfocar.aicoachstock.domain.repository.StockRepository
 import com.myinfocar.aicoachstock.domain.stockinfo.StockInfoService
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -139,29 +142,37 @@ class StockDetailViewModel @Inject constructor(
             val market = stock?.market ?: Market.KR
             val isKr = market == Market.KR
 
-            val tick = marketDataSource.fetchClosePrice(argTicker, market).getOrNull()
-            val info = if (isKr) stockInfoService.fetchStockInfo(argTicker) else null
-            val chart = if (isKr) stockInfoService.fetchDailyChart(argTicker, 30) else emptyList()
-            val asking = if (isKr) stockInfoService.fetchAskingPrice(argTicker) else null
-            val investors = if (isKr) stockInfoService.fetchInvestorTrend(argTicker, 5) else emptyList()
-            val news = if (market == Market.US) stockInfoService.fetchOverseasNews(symbol = argTicker, limit = 5) else emptyList()
+            coroutineScope {
+                val tickDef = async { marketDataSource.fetchClosePrice(argTicker, market).getOrNull() }
+                val infoDef = async { if (isKr) stockInfoService.fetchStockInfo(argTicker) else null }
+                val chartDef = async { if (isKr) stockInfoService.fetchDailyChart(argTicker, 30) else emptyList() }
+                val askingDef = async { if (isKr) stockInfoService.fetchAskingPrice(argTicker) else null }
+                val investorsDef = async { if (isKr) stockInfoService.fetchInvestorTrend(argTicker, 5) else emptyList() }
+                val newsDef = async { if (market == Market.US) stockInfoService.fetchOverseasNews(symbol = argTicker, limit = 5) else emptyList() }
 
-            _ui.update {
-                it.copy(
-                    isLoading = false,
-                    market = market,
-                    nameKo = info?.prdtName ?: stock?.nameKo,
-                    sector = info?.idxBztpSmallName ?: info?.stdIndustryName ?: stock?.sector,
-                    tick = tick,
-                    chart = chart,
-                    asking = asking,
-                    orderBook = asking?.toOrderBookSnapshot(argTicker),
-                    investors = investors,
-                    news = news,
-                    info = info,
-                )
+                val tick = tickDef.await()
+                val info = infoDef.await()
+                val chart = chartDef.await()
+                val asking = askingDef.await()
+                val investors = investorsDef.await()
+                val news = newsDef.await()
+
+                _ui.update {
+                    it.copy(
+                        isLoading = false,
+                        market = market,
+                        nameKo = info?.prdtName ?: stock?.nameKo,
+                        sector = info?.idxBztpSmallName ?: info?.stdIndustryName ?: stock?.sector,
+                        tick = tick,
+                        chart = chart,
+                        asking = asking,
+                        orderBook = asking?.toOrderBookSnapshot(argTicker),
+                        investors = investors,
+                        news = news,
+                        info = info,
+                    )
+                }
             }
-            // 차트 풀세트 — 기본 일봉 60개
             fetchCandlesFor(_ui.value.timeframe)
         }
     }
@@ -245,6 +256,11 @@ class StockDetailViewModel @Inject constructor(
                 )
             )
             marketDataStream.ticks(argTicker).collect { tick ->
+                val prev = _ui.value
+                // 같은 가격이 연속 오면 차트·헤더 모두 변화 없음 — Compose recomposition 비용 차단.
+                if (tick.price == prev.tick?.price && tick.lastTickAt.isBefore(nextBucketAfter(prev.candles.lastOrNull()?.ts ?: tick.lastTickAt, prev.timeframe))) {
+                    return@collect
+                }
                 _ui.update { st ->
                     st.copy(
                         tick = tick,
@@ -767,11 +783,6 @@ private fun AdvisorResultCard(res: TradingAdvisorService.Parsed) {
             Text(res.analysis, style = MaterialTheme.typography.bodyMedium)
         }
     }
-}
-
-private fun formatPrice(value: Double, market: Market): String = when (market) {
-    Market.KR -> "%,d원".format(value.toLong())
-    Market.US -> "$${"%.2f".format(value)}"
 }
 
 @Composable
